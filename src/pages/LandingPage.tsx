@@ -11,6 +11,7 @@ export const LandingPage: React.FC = () => {
   const handleCreateRoom = (nickname: string) => {
     localStorage.setItem('oursync_nickname', nickname)
     const randomCode = 'LOVE-' + Math.floor(1000 + Math.random() * 9000)
+    sessionStorage.setItem('oursync_host_' + randomCode, 'true')
     navigate(`/room/${randomCode}`)
   }
 
@@ -24,6 +25,7 @@ export const LandingPage: React.FC = () => {
       localStorage.setItem('oursync_nickname', pendingNickname)
     }
     setIsJoinModalOpen(false)
+    sessionStorage.setItem('oursync_host_' + code, 'false')
     navigate(`/room/${code}`)
   }
 

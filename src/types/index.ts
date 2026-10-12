@@ -35,6 +35,33 @@ export interface RoomParticipant {
   avatarInitial: string
 }
 
+// Profil Pengguna (Google Auth & Guest)
+export interface UserProfile {
+  id: string
+  email?: string
+  name: string
+  avatarUrl?: string
+  isGuest: boolean
+}
+
+// Model tabel Supabase 'user_playlists'
+export interface UserPlaylist {
+  user_id: string
+  playlist: Song[]
+  updated_at?: string
+}
+
+// Model tabel Supabase 'direct_messages' (Obrolan Persisten)
+export interface DirectMessage {
+  id: string
+  sender_id: string
+  sender_name: string
+  receiver_id?: string
+  room_id: string
+  message: string
+  created_at: string
+}
+
 // Model tabel Supabase 'rooms'
 export interface RoomData {
   room_id: string
@@ -56,3 +83,5 @@ export type BroadcastEvent =
   | { type: 'REORDER_QUEUE'; payload: { queue: Song[] } }
   | { type: 'SEND_LOVE'; payload: { sender: string; timestamp: number } }
   | { type: 'CHAT_MESSAGE'; payload: { sender: string; message: string; timestamp: number } }
+  | { type: 'REQUEST_MERGE_PLAYLIST'; payload: { requesterId: string; requesterName: string; songs: Song[] } }
+  | { type: 'RESPONSE_MERGE_PLAYLIST'; payload: { requesterId: string; accepted: boolean; hostName: string; mergedQueue?: Song[] } }

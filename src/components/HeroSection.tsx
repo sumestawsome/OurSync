@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
-import { Sparkles, Plus, LogIn, ShieldCheck, Zap, Radio, HeartHandshake } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Sparkles, Plus, LogIn, ShieldCheck, Zap, Radio, HeartHandshake, LogOut } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 
 interface HeroSectionProps {
   onCreateRoom: (nickname: string) => void
@@ -10,8 +11,15 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   onCreateRoom,
   onOpenJoinModal,
 }) => {
-  const [nickname, setNickname] = useState('')
+  const { user, loginWithGoogle, logout, activeName, activeAvatar } = useAuth()
+  const [nickname, setNickname] = useState(activeName || '')
   const [errorMsg, setErrorMsg] = useState('')
+
+  useEffect(() => {
+    if (activeName) {
+      setNickname(activeName)
+    }
+  }, [activeName])
 
   const handleCreate = () => {
     if (!nickname.trim()) {
@@ -56,6 +64,53 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
 
       {/* Formulir Setup Sesi (Sharp Rectangle Card) */}
       <div className="w-full max-w-md mx-auto mt-10 p-6 sm:p-8 bg-white border border-[#f0dbe2] shadow-sm relative">
+        {/* Google Auth Status / Action Banner */}
+        <div className="mb-5 pb-4 border-b border-zinc-200">
+          {user ? (
+            <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200">
+              <div className="flex items-center gap-2.5 min-w-0">
+                {activeAvatar ? (
+                  <img
+                    src={activeAvatar}
+                    alt={activeName}
+                    className="w-8 h-8 object-cover border border-emerald-300 shrink-0"
+                  />
+                ) : (
+                  <div className="w-8 h-8 bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-xs border border-emerald-300 shrink-0">
+                    {activeName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-xs font-bold text-zinc-900 truncate">
+                    {activeName}
+                  </p>
+                  <p className="text-[10px] text-emerald-700 font-medium">
+                    Terhubung via Google Auth
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={logout}
+                className="p-1.5 text-zinc-500 hover:text-[#e11d48] text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                title="Keluar akun Google"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span className="text-[11px]">Keluar</span>
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={loginWithGoogle}
+              className="w-full py-2.5 px-3 bg-white hover:bg-[#fdf2f6] border border-zinc-300 hover:border-[#ec4899] text-xs font-bold text-zinc-800 flex items-center justify-center gap-2 transition-colors cursor-pointer"
+            >
+              <LogIn className="w-4 h-4 text-[#ec4899]" />
+              <span>Masuk dengan Google (Simpan Playlist &amp; Chat)</span>
+            </button>
+          )}
+        </div>
+
         <div className="space-y-5">
           <div>
             <label className="block text-xs font-bold text-zinc-700 uppercase tracking-wider mb-2 text-left">

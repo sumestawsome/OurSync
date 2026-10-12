@@ -7,7 +7,9 @@ import {
   Menu,
   X,
   Share2,
+  LogIn,
 } from 'lucide-react'
+import { useAuth } from '../context/AuthContext'
 
 interface NavbarProps {
   roomId: string
@@ -24,6 +26,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [copied, setCopied] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const { user, loginWithGoogle, logout, activeName, activeAvatar } = useAuth()
 
   const handleCopy = () => {
     const shareUrl = window.location.href
@@ -52,9 +55,9 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* DESKTOP NAVIGATION ITEMS */}
-          <div className="hidden md:flex items-center gap-3.5">
+          <div className="hidden md:flex items-center gap-3">
             {/* ID Room & Tombol Salin Cepat (Kotak Bersudut Tajam) */}
-            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-xs">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-xs">
               <span className="text-zinc-600 font-semibold">Room ID:</span>
               <span className="font-heading font-bold text-[#ec4899] tracking-wider">
                 {roomId}
@@ -80,12 +83,51 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Indikator Status Pasangan Hijau Pastel (Kotak Tajam) */}
-            <div className="flex items-center gap-2 px-3.5 py-1.5 bg-emerald-50 border border-emerald-200">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200">
               <span className="inline-block w-2.5 h-2.5 bg-emerald-500"></span>
               <span className="text-xs font-semibold text-emerald-800">
                 {isPartnerOnline ? `Online bersama ${partnerName}` : 'Menunggu pasangan...'}
               </span>
             </div>
+
+            {/* INFO PROFIL AKUN GOOGLE ATAU TOMBOL LOGIN */}
+            {user ? (
+              <div className="flex items-center gap-2 px-2.5 py-1 bg-white border border-zinc-200">
+                {activeAvatar ? (
+                  <img
+                    src={activeAvatar}
+                    alt={activeName}
+                    className="w-6 h-6 object-cover border border-zinc-300"
+                  />
+                ) : (
+                  <div className="w-6 h-6 bg-[#fdf2f6] text-[#ec4899] flex items-center justify-center font-bold text-xs border border-[#f9a8d4]">
+                    {activeName.charAt(0).toUpperCase()}
+                  </div>
+                )}
+                <span className="text-xs font-bold text-zinc-800 truncate max-w-[110px]" title={activeName}>
+                  {activeName}
+                </span>
+                <button
+                  type="button"
+                  onClick={logout}
+                  className="p-1 hover:bg-zinc-100 text-zinc-500 hover:text-[#e11d48] transition-colors cursor-pointer"
+                  title="Keluar akun"
+                  aria-label="Keluar akun"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={loginWithGoogle}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-[#fdf2f6] border border-zinc-300 hover:border-[#f9a8d4] text-xs font-bold text-zinc-800 transition-colors cursor-pointer"
+                title="Masuk menggunakan akun Google"
+              >
+                <LogIn className="w-3.5 h-3.5 text-[#ec4899]" />
+                <span>Login Google</span>
+              </button>
+            )}
 
             {/* Tombol Keluar Ruangan (Kotak Tajam) */}
             <button
@@ -129,7 +171,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             className="w-4/5 max-w-xs h-full bg-white border-l-2 border-zinc-900 p-6 flex flex-col justify-between shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="space-y-6">
+            <div className="space-y-5">
               {/* Drawer Header */}
               <div className="flex items-center justify-between pb-4 border-b border-zinc-200">
                 <div className="flex items-center gap-2">
@@ -145,6 +187,51 @@ export const Navbar: React.FC<NavbarProps> = ({
                 >
                   <X className="w-4 h-4" />
                 </button>
+              </div>
+
+              {/* Status Akun Pengguna di Mobile */}
+              <div className="p-3 bg-zinc-50 border border-zinc-200">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-2 font-bold">
+                  Akun Kamu
+                </p>
+                {user ? (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {activeAvatar ? (
+                        <img
+                          src={activeAvatar}
+                          alt={activeName}
+                          className="w-8 h-8 object-cover border border-zinc-300"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 bg-[#fdf2f6] text-[#ec4899] flex items-center justify-center font-bold text-sm border border-[#f9a8d4]">
+                          {activeName.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-xs font-bold text-zinc-900">{activeName}</p>
+                        <p className="text-[10px] text-zinc-500">{user.email}</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={logout}
+                      className="p-1.5 text-zinc-500 hover:text-[#e11d48]"
+                      title="Keluar akun"
+                    >
+                      <LogOut className="w-4 h-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={loginWithGoogle}
+                    className="w-full py-2 bg-white border border-zinc-300 hover:border-[#ec4899] text-xs font-bold text-zinc-800 flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <LogIn className="w-3.5 h-3.5 text-[#ec4899]" />
+                    <span>Masuk dengan Google</span>
+                  </button>
+                )}
               </div>
 
               {/* Status Pasangan */}

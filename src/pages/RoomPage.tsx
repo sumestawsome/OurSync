@@ -8,16 +8,23 @@ import { ChatAndActivity } from '../components/ChatAndActivity'
 import { FloatingHearts } from '../components/FloatingHearts'
 import type { HeartParticle } from '../components/FloatingHearts'
 import {
+  JoinerMergeChoiceModal,
+  HostApprovalModal,
+} from '../components/MergePlaylistModal'
+import {
   initialPlaylist,
   initialMessages,
   initialActivities,
 } from '../data/mockData'
 import type { Song, ChatMessage, ActivityLog, BroadcastEvent } from '../types'
 import { supabase } from '../lib/supabaseClient'
+import { useAuth } from '../context/AuthContext'
+import { getPersonalPlaylist, savePersonalPlaylist } from '../utils/personalPlaylist'
 
 export const RoomPage: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
+  const { activeName, activeId } = useAuth()
 
   // State antrean & pemutar
   const [queue, setQueue] = useState<Song[]>(initialPlaylist)
@@ -37,21 +44,31 @@ export const RoomPage: React.FC = () => {
   const [isPartnerOnline, setIsPartnerOnline] = useState(false)
   const [partnerName, setPartnerName] = useState('Pasangan')
 
-  // Ref pemain YouTube dan Supabase channel
+  // State Penggabungan Playlist Pribadi (Merge System)
+  const [personalPlaylist, setPersonalPlaylist] = useState<Song[]>([])
+  const [showJoinerChoiceModal, setShowJoinerChoiceModal] = useState(false)
+  const [showHostApprovalModal, setShowHostApprovalModal] = useState(false)
+  const [pendingMergeRequest, setPendingMergeRequest] = useState<{
+    requesterId: string
+    requesterName: string
+    songs: Song[]
+  } | null>(null)
+
+  const hasCheckedMergePrompt = useRef(false)
   const playerRef = useRef<any>(null)
   const channelRef = useRef<any>(null)
   const clientId = useRef<string>('client-' + Math.random().toString(36).substring(2, 9)).current
 
   const currentSong = queue[currentSongIndex] || null
-  const storedNickname = localStorage.getItem('oursync_nickname') || 'Kamu'
+  const isHost = typeof window !== 'undefined' && sessionStorage.getItem('oursync_host_' + roomId) === 'true'
 
-  // Helper untuk mendapatkan instance YouTube player secara andal
+  // Helper untuk mendapatkan instance YouTube player
   const getYTPlayer = () => {
     if (!playerRef.current) return null
     return playerRef.current.internalPlayer || playerRef.current
   }
 
-  // Helper untuk menyimpan / sinkronisasi state room ke database Supabase (tabel rooms)
+  // Helper untuk menyimpan state room ke database Supabase (tabel rooms)
   const saveRoomState = async (updates: {
     playlist?: Song[]
     currentSong?: Song | null
@@ -122,7 +139,60 @@ export const RoomPage: React.FC = () => {
     loadRoomData()
   }, [roomId])
 
-  // 2. SUPABASE REALTIME CHANNEL (BROADCAST & PRESENCE)
+  // 2. FETCH OBROLAN PERSISTEN DARI TABEL SUPABASE (DIRECT_MESSAGES)
+  useEffect(() => {
+    if (!roomId) return
+
+    const loadDirectMessages = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('direct_messages')
+          .select('*')
+          .eq('room_id', roomId)
+          .order('created_at', { ascending: true })
+          .limit(100)
+
+        if (data && !error && data.length > 0) {
+          const formatted: ChatMessage[] = data.map((m: any) => {
+            const date = new Date(m.created_at)
+            const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+            return {
+              id: m.id || 'msg-' + Date.now(),
+              sender: m.sender_name || 'Pasangan',
+              text: m.message,
+              timestamp: timeStr,
+              isSelf: m.sender_id === activeId,
+            }
+          })
+          setMessages(formatted)
+        }
+      } catch (err) {
+        console.warn('Gagal memuat pesan obrolan persisten dari database:', err)
+      }
+    }
+
+    loadDirectMessages()
+  }, [roomId, activeId])
+
+  // 3. CEK PLAYLIST PRIBADI UNTUK PENGGUNA YANG BERGABUNG (JOINER)
+  useEffect(() => {
+    if (!roomId) return
+
+    const checkPersonalPlaylist = async () => {
+      const pPlaylist = await getPersonalPlaylist(activeId)
+      setPersonalPlaylist(pPlaylist)
+
+      // Jika bukan Host dan memiliki lagu di playlist pribadi, tanyakan pilihan penggabungan sekali saja
+      if (!isHost && pPlaylist.length > 0 && !hasCheckedMergePrompt.current) {
+        hasCheckedMergePrompt.current = true
+        setShowJoinerChoiceModal(true)
+      }
+    }
+
+    checkPersonalPlaylist()
+  }, [roomId, activeId, isHost])
+
+  // 4. SUPABASE REALTIME CHANNEL (BROADCAST & PRESENCE)
   useEffect(() => {
     if (!roomId) return
 
@@ -196,7 +266,7 @@ export const RoomPage: React.FC = () => {
       .subscribe(async (status) => {
         if (status === 'SUBSCRIBED') {
           await channel.track({
-            user: storedNickname,
+            user: activeName,
             online_at: new Date().toISOString(),
           })
         }
@@ -206,9 +276,9 @@ export const RoomPage: React.FC = () => {
       channel.unsubscribe()
       channelRef.current = null
     }
-  }, [roomId, clientId, storedNickname])
+  }, [roomId, clientId, activeName])
 
-  // 3. LOGIKA MENANGANI EVENT BROADCAST YANG DITERIMA DARI PASANGAN
+  // 5. LOGIKA MENANGANI EVENT BROADCAST YANG DITERIMA DARI PASANGAN
   const handleIncomingBroadcast = (event: BroadcastEvent) => {
     const player = getYTPlayer()
 
@@ -314,10 +384,7 @@ export const RoomPage: React.FC = () => {
 
       case 'ADD_QUEUE': {
         const { song } = event.payload
-        setQueue((prev) => {
-          const updated = [...prev, song]
-          return updated
-        })
+        setQueue((prev) => [...prev, song])
         const now = new Date()
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
         setActivities((prev) => [
@@ -382,10 +449,50 @@ export const RoomPage: React.FC = () => {
         setMessages((prev) => [...prev, incomingMsg])
         break
       }
+
+      // 6. EVENT PERMINTAAN GABUNG PLAYLIST DITERIMA HOST
+      case 'REQUEST_MERGE_PLAYLIST': {
+        setPendingMergeRequest(event.payload)
+        setShowHostApprovalModal(true)
+        break
+      }
+
+      // 7. EVENT RESPON GABUNG PLAYLIST DITERIMA JOINER
+      case 'RESPONSE_MERGE_PLAYLIST': {
+        const { accepted, hostName, mergedQueue } = event.payload
+        const now = new Date()
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+
+        if (accepted && mergedQueue) {
+          setQueue(mergedQueue)
+          setActivities((prev) => [
+            {
+              id: 'act-' + Date.now(),
+              type: 'add_song',
+              text: `${hostName} menyetujui penggabungan playlist! Playlist kamu berhasil digabung.`,
+              time: timeStr,
+              user: hostName,
+            },
+            ...prev,
+          ])
+        } else {
+          setActivities((prev) => [
+            {
+              id: 'act-' + Date.now(),
+              type: 'pause',
+              text: `${hostName} menolak penggabungan playlist. Menggunakan playlist host.`,
+              time: timeStr,
+              user: hostName,
+            },
+            ...prev,
+          ])
+        }
+        break
+      }
     }
   }
 
-  // 4. BROADCAST HELPER UNTUK MENGIRIM EVENT KE PASANGAN
+  // 8. BROADCAST HELPER UNTUK MENGIRIM EVENT KE PASANGAN
   const sendBroadcast = (event: BroadcastEvent) => {
     if (channelRef.current) {
       channelRef.current.send({
@@ -396,7 +503,104 @@ export const RoomPage: React.FC = () => {
     }
   }
 
-  // 5. FITUR AUTO-ADVANCE PLAYLIST (LAGU OTOMATIS LANJUT SAAT SELESAI)
+  // 9. LOGIKA PERSETUJUAN PENGGABUNGAN PLAYLIST DI SISI HOST
+  const handleAcceptMergeRequest = () => {
+    if (!pendingMergeRequest) return
+    const { requesterName, songs } = pendingMergeRequest
+
+    // Gabungkan lagu tanpa duplikasi ID
+    const existingIds = new Set(queue.map((s) => s.id))
+    const uniqueNewSongs = songs.filter((s) => !existingIds.has(s.id))
+    const mergedQueue = [...queue, ...uniqueNewSongs]
+
+    setQueue(mergedQueue)
+    setShowHostApprovalModal(false)
+    setPendingMergeRequest(null)
+
+    // Pancarkan ke pasangan bahwa permintaan disetujui beserta playlist gabungannya
+    sendBroadcast({
+      type: 'RESPONSE_MERGE_PLAYLIST',
+      payload: {
+        requesterId: pendingMergeRequest.requesterId,
+        accepted: true,
+        hostName: activeName,
+        mergedQueue,
+      },
+    })
+
+    // Update antrean ke Supabase rooms
+    saveRoomState({ playlist: mergedQueue })
+
+    const now = new Date()
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    setActivities((prev) => [
+      {
+        id: 'act-' + Date.now(),
+        type: 'add_song',
+        text: `Menyetujui penggabungan playlist dari ${requesterName} (+${uniqueNewSongs.length} lagu)`,
+        time: timeStr,
+        user: activeName,
+      },
+      ...prev,
+    ])
+  }
+
+  const handleRejectMergeRequest = () => {
+    if (!pendingMergeRequest) return
+    const { requesterId, requesterName } = pendingMergeRequest
+
+    setShowHostApprovalModal(false)
+    setPendingMergeRequest(null)
+
+    sendBroadcast({
+      type: 'RESPONSE_MERGE_PLAYLIST',
+      payload: {
+        requesterId,
+        accepted: false,
+        hostName: activeName,
+      },
+    })
+
+    const now = new Date()
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    setActivities((prev) => [
+      {
+        id: 'act-' + Date.now(),
+        type: 'pause',
+        text: `Menolak penggabungan playlist dari ${requesterName}`,
+        time: timeStr,
+        user: activeName,
+      },
+      ...prev,
+    ])
+  }
+
+  // 10. AKSI JOINER MENGIRIM PERMINTAAN GABUNG PLAYLIST KE HOST
+  const handleRequestMergePlaylist = () => {
+    sendBroadcast({
+      type: 'REQUEST_MERGE_PLAYLIST',
+      payload: {
+        requesterId: activeId,
+        requesterName: activeName,
+        songs: personalPlaylist,
+      },
+    })
+
+    const now = new Date()
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    setActivities((prev) => [
+      {
+        id: 'act-' + Date.now(),
+        type: 'add_song',
+        text: `Mengirimkan permintaan penggabungan playlist ke pemilik ruangan...`,
+        time: timeStr,
+        user: activeName,
+      },
+      ...prev,
+    ])
+  }
+
+  // 11. FITUR AUTO-ADVANCE PLAYLIST (LAGU OTOMATIS LANJUT SAAT SELESAI)
   const handleAutoAdvanceNext = () => {
     if (queue.length === 0) return
 
@@ -407,7 +611,6 @@ export const RoomPage: React.FC = () => {
     setCurrentTimeSeconds(0)
     setIsPlaying(true)
 
-    // Mainkan pemutar lokal
     const player = getYTPlayer()
     if (player) {
       try {
@@ -418,7 +621,6 @@ export const RoomPage: React.FC = () => {
       }
     }
 
-    // Pancarkan ke pasangan via Supabase Broadcast
     sendBroadcast({
       type: 'CHANGE_SONG',
       payload: {
@@ -428,7 +630,6 @@ export const RoomPage: React.FC = () => {
       },
     })
 
-    // Simpan ke Supabase Database (rooms)
     saveRoomState({
       currentSong: nextSong,
       isPlaying: true,
@@ -449,7 +650,7 @@ export const RoomPage: React.FC = () => {
     ])
   }
 
-  // 6. TIMER UPDATE PROGRES DARI YOUTUBE PLAYER SECARA PRESISI
+  // 12. TIMER UPDATE PROGRES DARI YOUTUBE PLAYER SECARA PRESISI
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>
     if (isPlaying) {
@@ -470,7 +671,7 @@ export const RoomPage: React.FC = () => {
     return () => clearInterval(interval)
   }, [isPlaying])
 
-  // 7. AKSI KONTROL PLAY / PAUSE DARI PENGGUNA LOKAL
+  // 13. AKSI KONTROL PLAY / PAUSE DARI PENGGUNA LOKAL
   const handleTogglePlay = () => {
     const player = getYTPlayer()
     const nextState = !isPlaying
@@ -508,7 +709,6 @@ export const RoomPage: React.FC = () => {
 
     setIsPlaying(nextState)
 
-    // Simpan ke database Supabase
     saveRoomState({
       isPlaying: nextState,
       currentTime,
@@ -520,15 +720,15 @@ export const RoomPage: React.FC = () => {
       {
         id: 'act-' + Date.now(),
         type: nextState ? 'play' : 'pause',
-        text: `${storedNickname} ${nextState ? 'memutar' : 'menjeda'} musik`,
+        text: `${activeName} ${nextState ? 'memutar' : 'menjeda'} musik`,
         time: timeStr,
-        user: storedNickname,
+        user: activeName,
       },
       ...prev,
     ])
   }
 
-  // 8. AKSI SEEK BAR DARI PENGGUNA LOKAL
+  // 14. AKSI SEEK BAR DARI PENGGUNA LOKAL
   const handleSeek = (newTime: number) => {
     const player = getYTPlayer()
     if (player && typeof player.seekTo === 'function') {
@@ -545,7 +745,7 @@ export const RoomPage: React.FC = () => {
     saveRoomState({ currentTime: newTime })
   }
 
-  // 9. AKSI SKIP NEXT & PREV
+  // 15. AKSI SKIP NEXT & PREV
   const handleSkipNext = () => {
     if (queue.length === 0) return
     const nextIdx = (currentSongIndex + 1) % queue.length
@@ -585,9 +785,9 @@ export const RoomPage: React.FC = () => {
       {
         id: 'act-' + Date.now(),
         type: 'play',
-        text: `${storedNickname} beralih ke lagu: ${nextSong.title}`,
+        text: `${activeName} beralih ke lagu: ${nextSong.title}`,
         time: timeStr,
-        user: storedNickname,
+        user: activeName,
       },
       ...prev,
     ])
@@ -627,7 +827,7 @@ export const RoomPage: React.FC = () => {
     })
   }
 
-  // 10. AKSI PUTAR LAGU DARI DAFTAR ANTREAN
+  // 16. AKSI PUTAR LAGU DARI DAFTAR ANTREAN
   const handlePlaySong = (songId: string) => {
     const idx = queue.findIndex((s) => s.id === songId)
     if (idx !== -1) {
@@ -669,19 +869,19 @@ export const RoomPage: React.FC = () => {
           type: 'play',
           text: `Memutar ${selectedSong.title}`,
           time: timeStr,
-          user: storedNickname,
+          user: activeName,
         },
         ...prev,
       ])
     }
   }
 
-  // 11. AKSI TAMBAH LAGU KE ANTREAN BERSAMA
+  // 17. AKSI TAMBAH LAGU KE ANTREAN BERSAMA & PLAYLIST PRIBADI
   const handleAddSong = (newSongData: Omit<Song, 'id'>) => {
     const newSong: Song = {
       ...newSongData,
       id: 'song-' + Date.now(),
-      addedBy: storedNickname,
+      addedBy: activeName,
     }
     const updatedQueue = [...queue, newSong]
     setQueue(updatedQueue)
@@ -693,21 +893,26 @@ export const RoomPage: React.FC = () => {
 
     saveRoomState({ playlist: updatedQueue })
 
+    // Simpan juga ke playlist pribadi pengguna aktif
+    const updatedPersonal = [...personalPlaylist, newSong]
+    setPersonalPlaylist(updatedPersonal)
+    savePersonalPlaylist(activeId, updatedPersonal)
+
     const now = new Date()
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
     setActivities((prev) => [
       {
         id: 'act-' + Date.now(),
         type: 'add_song',
-        text: `${storedNickname} menambahkan "${newSong.title}"`,
+        text: `${activeName} menambahkan "${newSong.title}"`,
         time: timeStr,
-        user: storedNickname,
+        user: activeName,
       },
       ...prev,
     ])
   }
 
-  // 12. AKSI HAPUS LAGU DARI ANTREAN
+  // 18. AKSI HAPUS LAGU DARI ANTREAN
   const handleRemoveSong = (songId: string) => {
     const updatedQueue = queue.filter((s) => s.id !== songId)
     setQueue(updatedQueue)
@@ -725,7 +930,7 @@ export const RoomPage: React.FC = () => {
     }
   }
 
-  // 13. AKSI REORDERING / PENGURUTAN ANTREAN
+  // 19. AKSI REORDERING / PENGURUTAN ANTREAN
   const handleReorderQueue = (newQueue: Song[]) => {
     setQueue(newQueue)
 
@@ -744,32 +949,48 @@ export const RoomPage: React.FC = () => {
     saveRoomState({ playlist: newQueue })
   }
 
-  // 14. AKSI CHAT REAL-TIME (LIVE CHAT VIA SUPABASE BROADCAST)
-  const handleSendMessage = (text: string) => {
+  // 20. AKSI CHAT PERSISTEN ANTAR AKUN (DIRECT MESSAGES + REALTIME BROADCAST)
+  const handleSendMessage = async (text: string) => {
     const now = new Date()
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
     const timestamp = Date.now()
+    const msgId = 'msg-' + timestamp
 
     const newMsg: ChatMessage = {
-      id: 'msg-' + timestamp,
-      sender: storedNickname,
+      id: msgId,
+      sender: activeName,
       text,
       timestamp: timeStr,
       isSelf: true,
     }
     setMessages((prev) => [...prev, newMsg])
 
+    // Pancarkan secara real-time ke pasangan
     sendBroadcast({
       type: 'CHAT_MESSAGE',
       payload: {
-        sender: storedNickname,
+        sender: activeName,
         message: text,
         timestamp,
       },
     })
+
+    // Simpan secara persisten ke tabel direct_messages di Supabase
+    try {
+      await supabase.from('direct_messages').insert({
+        id: msgId,
+        sender_id: activeId,
+        sender_name: activeName,
+        room_id: roomId,
+        message: text,
+        created_at: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.warn('Gagal menyimpan chat ke tabel direct_messages:', err)
+    }
   }
 
-  // 15. ANIMASI DETAK CINTA
+  // 21. ANIMASI DETAK CINTA
   const triggerFloatingHearts = () => {
     const newParticles: HeartParticle[] = Array.from({ length: 6 }).map((_, i) => ({
       id: Date.now() + i,
@@ -790,7 +1011,7 @@ export const RoomPage: React.FC = () => {
     sendBroadcast({
       type: 'SEND_LOVE',
       payload: {
-        sender: storedNickname,
+        sender: activeName,
         timestamp: Date.now(),
       },
     })
@@ -801,15 +1022,15 @@ export const RoomPage: React.FC = () => {
       {
         id: 'act-' + Date.now(),
         type: 'reaction',
-        text: `${storedNickname} mengirimkan getaran cinta di layar!`,
+        text: `${activeName} mengirimkan getaran cinta di layar!`,
         time: timeStr,
-        user: storedNickname,
+        user: activeName,
       },
       ...prev,
     ])
   }
 
-  // 16. KONTROL VOLUME & MUTE UNTUK YOUTUBE
+  // 22. KONTROL VOLUME & MUTE UNTUK YOUTUBE
   const handleVolumeChange = (vol: number) => {
     setVolume(vol)
     const player = getYTPlayer()
@@ -840,7 +1061,38 @@ export const RoomPage: React.FC = () => {
       {/* Floating vector hearts animation layer */}
       <FloatingHearts hearts={hearts} />
 
-      {/* Navbar Responsif dengan Presence Status Pasangan */}
+      {/* MODAL PILIHAN MERGE UNTUK PENGGUNA YANG BARU GABUNG */}
+      <JoinerMergeChoiceModal
+        isOpen={showJoinerChoiceModal}
+        onClose={() => setShowJoinerChoiceModal(false)}
+        personalSongCount={personalPlaylist.length}
+        onRequestMerge={handleRequestMergePlaylist}
+        onUseHostPlaylist={() => {
+          const now = new Date()
+          const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+          setActivities((prev) => [
+            {
+              id: 'act-' + Date.now(),
+              type: 'play',
+              text: `Kamu memilih mendengarkan playlist pemilik ruangan`,
+              time: timeStr,
+              user: activeName,
+            },
+            ...prev,
+          ])
+        }}
+      />
+
+      {/* MODAL PERSETUJUAN MERGE UNTUK PEMILIK RUANGAN (HOST) */}
+      <HostApprovalModal
+        isOpen={showHostApprovalModal}
+        requesterName={pendingMergeRequest?.requesterName || 'Pasangan'}
+        incomingSongs={pendingMergeRequest?.songs || []}
+        onAccept={handleAcceptMergeRequest}
+        onReject={handleRejectMergeRequest}
+      />
+
+      {/* Navbar Responsif dengan Info Profil Akun Google & Status Presence */}
       <Navbar
         roomId={roomId || 'SYNC-ROOM'}
         partnerName={partnerName}
