@@ -1,0 +1,63 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-heading: 'Outfit', system-ui, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #fcf8f9;
+    color: #1e1b1d;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+  }
+}
+
+.font-heading {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+}
+
+.font-sans {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* Sharp Card & Panel Utilities (Clean Light Mode, No Gradients, No Neon) */
+.sharp-card {
+  background-color: #ffffff;
+  border: 1px solid #f0dbe2;
+  box-shadow: 0 1px 3px rgba(30, 27, 29, 0.04);
+}
+
+.sharp-card-interactive {
+  background-color: #ffffff;
+  border: 1px solid #f0dbe2;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.sharp-card-interactive:hover {
+  border-color: #ec4899;
+  background-color: #fffbfe;
+}
+
+/* Custom sleek scrollbar for light mode with sharp edges */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f4ede8;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #ec4899;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #db2777;
+}
