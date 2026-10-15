@@ -1,7 +1,8 @@
 import React, { useRef } from 'react'
 import YouTube, { type YouTubeProps, type YouTubeEvent } from 'react-youtube'
 import type { Song } from '../types'
-import { Music2, Sparkles, CheckCircle2, Radio } from 'lucide-react'
+import { Music2, Sparkles } from 'lucide-react'
+import { cleanArtistName } from '../utils/youtube'
 
 interface MusicPlayerProps {
   currentSong: Song | null
@@ -90,6 +91,8 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
     )
   }
 
+  const formattedArtist = cleanArtistName(currentSong.artist)
+
   return (
     <div className="relative w-full bg-white border border-[#f0dbe2] shadow-sm p-5 sm:p-7 transition-all">
       {/* 
@@ -108,17 +111,12 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         />
       </div>
 
-      {/* Header Status Sinkronisasi Pasangan (Sharp Box Badges) */}
+      {/* Header Status Sesi Sederhana & Ramah Pengguna */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-4 border-b border-zinc-100 text-xs">
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] font-bold">
-            <CheckCircle2 className="w-3.5 h-3.5 text-[#ec4899]" />
-            <span>Sinkron Real-Time &bull; Supabase Connected</span>
-          </div>
-
-          <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 bg-white border border-zinc-200 text-zinc-600 text-[11px] font-semibold">
-            <Radio className="w-3 h-3 text-[#ec4899]" />
-            <span>Audio Sinkron</span>
+          <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-semibold">
+            <span className="w-2 h-2 bg-emerald-500 inline-block animate-pulse"></span>
+            <span>Sesi Aktif</span>
           </div>
         </div>
 
@@ -131,7 +129,7 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
       </div>
 
       {/* 
-        AREA TAMPILAN UTAMA (MENGGANTIKAN NATIVE YOUTUBE IFRAME):
+        AREA TAMPILAN UTAMA:
         Cover Art / Thumbnail Lagu Bersih Berukuran Tajam 90 Derajat Lengkap dengan Info Lagu
       */}
       <div className="mt-5 w-full bg-[#faf7f8] border border-zinc-200 aspect-[16/10] sm:aspect-[2/1] flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-10 p-6 md:p-8">
@@ -146,10 +144,6 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
                 isPlaying ? 'scale-105' : 'scale-100'
               }`}
             />
-            {/* Lencana Status Sudut Tajam */}
-            <div className="absolute top-2 left-2 px-2.5 py-0.5 bg-[#ec4899] text-white text-[10px] font-bold tracking-wider uppercase">
-              {isPlaying ? 'Memutar' : 'Jeda'}
-            </div>
           </div>
         </div>
 
@@ -157,14 +151,14 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
         <div className="flex flex-col items-center sm:items-start text-center sm:text-left max-w-sm">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] text-[11px] font-bold uppercase tracking-wider mb-2.5">
             <Sparkles className="w-3 h-3 text-[#ec4899]" />
-            <span>Sedang Diputar Bersama</span>
+            <span>SEDANG DIPUTAR</span>
           </div>
 
           <h2 className="text-xl sm:text-2xl lg:text-3xl font-extrabold font-heading text-[#1e1b1d] tracking-tight line-clamp-2">
             {currentSong.title}
           </h2>
           <p className="text-sm font-semibold text-zinc-500 font-sans mt-1 line-clamp-1">
-            {currentSong.artist}
+            {formattedArtist}
           </p>
 
           {/* Equalizer Visualizer Bars Pink Solid Bersudut Siku Tajam */}
@@ -181,12 +175,9 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
               />
             ))}
           </div>
-
-          <p className="text-[11px] text-zinc-400 mt-3 font-mono">
-            {isPlaying ? 'Audio terhubung & sinkron dengan pasangan' : 'Pemutaran sedang dijeda'}
-          </p>
         </div>
       </div>
     </div>
   )
 }
+

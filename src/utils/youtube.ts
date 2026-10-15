@@ -36,6 +36,17 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Membersihkan nama artis dari akhiran otomatis YouTube Music seperti "- Topic" atau "VEVO"
+ */
+export function cleanArtistName(artist?: string): string {
+  if (!artist) return 'Artis Musik'
+  return artist
+    .replace(/\s*-\s*Topic\s*$/i, '')
+    .replace(/\s*VEVO\s*$/i, '')
+    .trim()
+}
+
+/**
  * Mengambil metadata judul & artis video YouTube secara dinamis via oEmbed tanpa API key
  */
 export async function fetchYouTubeVideoInfo(videoId: string): Promise<{ title?: string; author?: string }> {
@@ -45,7 +56,7 @@ export async function fetchYouTubeVideoInfo(videoId: string): Promise<{ title?: 
       const data = await res.json()
       return {
         title: data.title || undefined,
-        author: data.author_name || undefined,
+        author: data.author_name ? cleanArtistName(data.author_name) : undefined,
       }
     }
   } catch {
@@ -53,3 +64,4 @@ export async function fetchYouTubeVideoInfo(videoId: string): Promise<{ title?: 
   }
   return {}
 }
+

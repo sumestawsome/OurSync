@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import type { Song } from '../types'
-import { extractYouTubeId, getYouTubeThumbnail, fetchYouTubeVideoInfo } from '../utils/youtube'
+import { extractYouTubeId, getYouTubeThumbnail, fetchYouTubeVideoInfo, cleanArtistName } from '../utils/youtube'
 import {
   Search,
   Plus,
@@ -11,9 +11,9 @@ import {
   Link2,
   GripVertical,
   Loader2,
-  Bookmark,
   BookmarkCheck,
   BookmarkPlus,
+  RotateCcw,
 } from 'lucide-react'
 
 interface PlaylistQueueProps {
@@ -46,6 +46,16 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
   const [newUrl, setNewUrl] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  
+  // Undo deletion state (8 Golden Rules: Permit easy reversal of actions)
+  const [deletedItem, setDeletedItem] = useState<{ song: Song; index: number } | null>(null)
+  const undoTimeoutRef = useRef<any>(null)
+
+  useEffect(() => {
+    return () => {
+      if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+    }
+  }, [])
 
   const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -60,7 +70,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
         const info = await fetchYouTubeVideoInfo(extractedId)
         onAddSong({
           title: info.title || `YouTube Track (${extractedId.substring(0, 6)}...)`,
-          artist: info.author || 'YouTube Video',
+          artist: info.author ? cleanArtistName(info.author) : 'YouTube Video',
           duration: '--:--',
           durationSeconds: 0,
           thumbnail: getYouTubeThumbnail(extractedId),
@@ -102,7 +112,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
 
       if (extractedId && (!finalArtist || finalTitle.length < 3)) {
         const info = await fetchYouTubeVideoInfo(extractedId)
-        if (info.author && !finalArtist) finalArtist = info.author
+        if (info.author && !finalArtist) finalArtist = cleanArtistName(info.author)
         if (info.title && finalTitle.length < 3) finalTitle = info.title
       }
 
@@ -124,6 +134,34 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
     } finally {
       setIsSubmitting(false)
     }
+  }
+
+  // Handle Remove Song with Undo Safety Protection
+  const handleDeleteWithUndo = (song: Song, index: number) => {
+    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+    setDeletedItem({ song, index })
+    onRemoveSong(song.id)
+
+    undoTimeoutRef.current = setTimeout(() => {
+      setDeletedItem(null)
+    }, 5500)
+  }
+
+  const handleUndoDelete = () => {
+    if (!deletedItem) return
+    if (undoTimeoutRef.current) clearTimeout(undoTimeoutRef.current)
+
+    // Pulihkan lagu ke antrean
+    if (onReorderQueue) {
+      const restored = [...queue]
+      const targetIndex = Math.min(deletedItem.index, restored.length)
+      restored.splice(targetIndex, 0, deletedItem.song)
+      onReorderQueue(restored)
+    } else {
+      onAddSong(deletedItem.song)
+    }
+
+    setDeletedItem(null)
   }
 
   // HTML5 Drag and Drop handlers
@@ -155,7 +193,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
   )
 
   return (
-    <div className="w-full bg-white border border-[#f0dbe2] shadow-sm p-5 sm:p-6 flex flex-col h-full">
+    <div className="w-full bg-white border border-[#f0dbe2] shadow-sm p-5 sm:p-6 flex flex-col h-full relative">
       {/* Header Antrean Lagu */}
       <div className="flex items-center justify-between pb-4 border-b border-zinc-100">
         <div className="flex items-center gap-2">
@@ -177,27 +215,30 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
             <button
               type="button"
               onClick={onImportPersonalPlaylist}
-              className="px-3 py-1.5 bg-white hover:bg-[#fdf2f6] border border-zinc-300 hover:border-[#f9a8d4] text-zinc-700 hover:text-[#ec4899] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              className="px-3 py-1.5 bg-[#fdf2f6] hover:bg-[#fce7f3] border border-[#f9a8d4] text-[#ec4899] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
               title="Muat lagu dari koleksi playlist pribadi akun ke antrean ruangan saat ini"
             >
-              <Bookmark className="w-3.5 h-3.5 text-[#ec4899]" />
-              <span className="hidden sm:inline">Koleksi Pribadi</span>
-              <span className="font-bold text-[#ec4899]">({personalPlaylist.length})</span>
+              <BookmarkPlus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">+ Impor Koleksi</span>
+              <span className="inline sm:hidden">+ Impor</span>
+              <span>({personalPlaylist.length})</span>
             </button>
           )}
 
           <button
             type="button"
             onClick={() => setShowAddForm(!showAddForm)}
-            className="px-3.5 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] hover:bg-[#ec4899] hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+            className="px-3 py-1.5 bg-white hover:bg-zinc-50 border border-zinc-300 text-zinc-700 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+            title="Buka form input detail manual"
           >
-            <Plus className="w-3.5 h-3.5" />
-            <span>{showAddForm ? 'Tutup Form' : 'Tambah Lagu'}</span>
+            <Plus className="w-3.5 h-3.5 text-[#ec4899]" />
+            <span className="hidden sm:inline">{showAddForm ? 'Tutup Form' : 'Detail Manual'}</span>
+            <span className="inline sm:hidden">{showAddForm ? 'Tutup' : 'Manual'}</span>
           </button>
         </div>
       </div>
 
-      {/* Kotak Pencarian Tautan/Judul Lagu Bersudut Siku Tajam */}
+      {/* Kotak Input Pencarian & Tautan URL Selalu Siap Pakai */}
       <form onSubmit={handleSearchSubmit} className="mt-4 relative">
         <div className="relative flex items-center">
           <Search className="absolute left-3.5 w-4 h-4 text-zinc-400 pointer-events-none" />
@@ -223,21 +264,21 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
         </div>
       </form>
 
-      {/* Form Tambah Manual Kotak Tajam */}
+      {/* Form Tambah Manual (Diperluas saat tombol Detail Manual ditekan) */}
       {showAddForm && (
         <form
           onSubmit={handleManualAdd}
-          className="mt-3 p-4 bg-[#faf7f8] border border-zinc-200 space-y-3 text-xs"
+          className="mt-3 p-4 bg-[#faf7f8] border border-zinc-200 space-y-3 text-xs animate-in fade-in duration-200"
         >
           <p className="font-bold text-[#ec4899] font-heading">
-            Tambah Tautan YouTube atau Musik Baru
+            Tambah Lagu dengan Detail Manual
           </p>
           <div className="space-y-2">
             <input
               type="text"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Judul Lagu (Contoh: Toxic)"
+              placeholder="Judul Lagu (Contoh: Sempurna)"
               className="w-full px-3.5 py-2 bg-white border border-zinc-300 text-[#1e1b1d] placeholder:text-zinc-400 focus:outline-none focus:border-[#ec4899]"
               required
             />
@@ -245,7 +286,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
               type="text"
               value={newArtist}
               onChange={(e) => setNewArtist(e.target.value)}
-              placeholder="Nama Artis (Contoh: Britney Spears)"
+              placeholder="Nama Artis (Contoh: Andra and The Backbone)"
               className="w-full px-3.5 py-2 bg-white border border-zinc-300 text-[#1e1b1d] placeholder:text-zinc-400 focus:outline-none focus:border-[#ec4899]"
             />
             <div className="relative">
@@ -270,7 +311,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
         </form>
       )}
 
-      {/* DAFTAR ANTREAN LAGU DENGAN DUKUNGAN REORDERING (DRAG & DROP) */}
+      {/* DAFTAR ANTREAN LAGU */}
       <div className="mt-4 space-y-2.5 overflow-y-auto max-h-[380px] pr-1 flex-1">
         {filteredQueue.length === 0 ? (
           <div className="text-center py-8 px-4 text-zinc-400 text-xs">
@@ -290,8 +331,8 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                       onClick={onImportPersonalPlaylist}
                       className="px-4 py-2 bg-[#fdf2f6] hover:bg-[#ec4899] text-[#ec4899] hover:text-white border border-[#f9a8d4] text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-2"
                     >
-                      <Bookmark className="w-3.5 h-3.5 fill-current" />
-                      <span>Impor {personalPlaylist.length} Lagu dari Koleksi Pribadi Saya</span>
+                      <BookmarkPlus className="w-3.5 h-3.5" />
+                      <span>Impor {personalPlaylist.length} Lagu dari Koleksi Pribadi</span>
                     </button>
                   </div>
                 )}
@@ -307,6 +348,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
             const isSavedInPersonal = personalPlaylist.some(
               (p) => p.id === song.id || (p.videoId && p.videoId === song.videoId) || p.title === song.title
             )
+            const cleanedArtist = cleanArtistName(song.artist)
 
             return (
               <div
@@ -319,13 +361,12 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                   isDragging
                     ? 'opacity-40 border-dashed border-[#ec4899]'
                     : isCurrent
-                    ? 'bg-[#fdf2f6] border-[#f9a8d4]'
+                    ? 'bg-[#fdf2f6] border-[#f9a8d4] shadow-xs'
                     : 'bg-white border-zinc-200 hover:border-[#f9a8d4] hover:bg-[#fffbfe]'
                 }`}
               >
                 {/* Drag Handle & Info Lagu & Thumbnail */}
                 <div className="flex items-center gap-2.5 min-w-0">
-                  {/* Grip Handle Drag & Drop */}
                   <div
                     className="cursor-grab active:cursor-grabbing text-zinc-400 hover:text-[#ec4899] transition-colors p-0.5"
                     title="Tahan dan geser untuk ubah urutan antrean"
@@ -341,13 +382,22 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                     />
                     {isCurrent && (
                       <div className="absolute inset-0 bg-[#ec4899]/30 flex items-center justify-center">
-                        <span className="w-2 h-2 bg-white inline-block" />
+                        <span className="w-2 h-2 bg-white inline-block animate-ping" />
                       </div>
                     )}
                   </div>
 
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
+                      {/* Mini Equalizer Indicator on Active Song */}
+                      {isCurrent && (
+                        <span className="flex items-end gap-0.5 h-3 px-1 py-0.5 bg-[#ec4899] text-white shrink-0" title="Sedang diputar">
+                          <span className="w-0.5 h-2 bg-white animate-pulse"></span>
+                          <span className="w-0.5 h-3 bg-white animate-bounce"></span>
+                          <span className="w-0.5 h-1 bg-white animate-pulse"></span>
+                        </span>
+                      )}
+
                       <h4
                         className={`text-sm font-bold truncate font-heading ${
                           isCurrent ? 'text-[#ec4899]' : 'text-[#1e1b1d]'
@@ -355,23 +405,22 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                       >
                         {song.title}
                       </h4>
-                      {isCurrent && (
-                        <span className="px-2 py-0.5 bg-[#ec4899] text-white text-[9px] font-bold uppercase tracking-wider shrink-0">
-                          Memutar
-                        </span>
-                      )}
                     </div>
-                    <p className="text-xs text-zinc-500 truncate font-sans">
-                      {song.artist} &bull; <span className="text-zinc-600 font-medium">{song.addedBy}</span>
+                    <p className="text-xs text-zinc-500 truncate font-sans mt-0.5">
+                      {cleanedArtist} &bull; <span className="text-zinc-600 font-medium">{song.addedBy}</span>
                     </p>
                   </div>
                 </div>
 
-                {/* Info Durasi Akurat & Tombol Aksi */}
+                {/* Info Durasi & Tombol Aksi */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <div className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono hidden sm:flex mr-1">
                     <Clock className="w-3 h-3 text-zinc-400" />
-                    <span>{song.duration || '--:--'}</span>
+                    {song.duration && song.duration !== '--:--' ? (
+                      <span>{song.duration}</span>
+                    ) : (
+                      <span className="inline-block w-8 h-2.5 bg-zinc-200 animate-pulse" title="Memuat durasi..."></span>
+                    )}
                   </div>
 
                   {/* Tombol Simpan ke Playlist Pribadi */}
@@ -412,10 +461,10 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                     </button>
                   )}
 
-                  {/* Tombol Hapus */}
+                  {/* Tombol Hapus dengan Proteksi Undo */}
                   <button
                     type="button"
-                    onClick={() => onRemoveSong(song.id)}
+                    onClick={() => handleDeleteWithUndo(song, index)}
                     className="p-1.5 bg-zinc-100 hover:bg-[#fff1f2] hover:border-[#fecdd3] text-zinc-500 hover:text-[#e11d48] border border-zinc-200 transition-colors cursor-pointer"
                     title="Hapus dari antrean"
                     aria-label="Hapus dari antrean"
@@ -428,6 +477,27 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
           })
         )}
       </div>
+
+      {/* FEEDBACK TOAST DENGAN TOMBOL BATAL/UNDO SAAT HAPUS ANTREAN (8 Golden Rules: Reversal of actions) */}
+      {deletedItem && (
+        <div className="mt-3 p-3 bg-zinc-900 border border-zinc-800 text-white text-xs flex items-center justify-between gap-3 shadow-xl animate-in fade-in slide-in-from-bottom-2 duration-200">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="w-2 h-2 bg-amber-400 inline-block"></span>
+            <p className="truncate">
+              Lagu <span className="font-bold text-pink-300">"{deletedItem.song.title}"</span> dihapus
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleUndoDelete}
+            className="px-3 py-1 bg-[#ec4899] hover:bg-[#db2777] text-white font-bold text-xs flex items-center gap-1 transition-colors cursor-pointer shrink-0"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Batal (Undo)</span>
+          </button>
+        </div>
+      )}
     </div>
   )
 }
+

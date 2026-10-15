@@ -55,6 +55,14 @@ export const RoomPage: React.FC = () => {
   const channelRef = useRef<any>(null)
   const clientId = useRef<string>('client-' + Math.random().toString(36).substring(2, 9)).current
 
+  // Refs untuk Engine Buffer Handshake saat ganti lagu
+  const pendingSongId = useRef<string | null>(null)
+  const readyClients = useRef<Set<string>>(new Set())
+  const prepareTimeoutRef = useRef<any>(null)
+  const isInitiatorForSong = useRef<boolean>(false)
+  const queueRef = useRef<Song[]>(queue)
+  queueRef.current = queue
+
   const currentSong = queue[currentSongIndex] || null
   const isHost = typeof window !== 'undefined' && sessionStorage.getItem('oursync_host_' + roomId) === 'true'
 
@@ -62,6 +70,17 @@ export const RoomPage: React.FC = () => {
   const getYTPlayer = () => {
     if (!playerRef.current) return null
     return playerRef.current.internalPlayer || playerRef.current
+  }
+
+  // BROADCAST HELPER UNTUK MENGIRIM EVENT KE PASANGAN
+  const sendBroadcast = (event: BroadcastEvent) => {
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: 'broadcast',
+        event: 'music_sync',
+        payload: event,
+      })
+    }
   }
 
   // Helper untuk menyimpan state room:
@@ -106,6 +125,130 @@ export const RoomPage: React.FC = () => {
       })
     } catch (err) {
       console.warn('Gagal menyimpan status room ke database Supabase:', err)
+    }
+  }
+
+  // BUFFER HANDSHAKE: Luncurkan pemutaran audio serempak setelah perangkat siap atau timeout 2.5s
+  const launchPreparedSong = (songId: string) => {
+    if (prepareTimeoutRef.current) {
+      clearTimeout(prepareTimeoutRef.current)
+      prepareTimeoutRef.current = null
+    }
+
+    if (pendingSongId.current !== songId && pendingSongId.current !== null) {
+      return
+    }
+    pendingSongId.current = null
+    isInitiatorForSong.current = false
+    readyClients.current.clear()
+
+    const player = getYTPlayer()
+    if (player) {
+      try {
+        if (typeof player.seekTo === 'function') player.seekTo(0, true)
+        if (typeof player.playVideo === 'function') player.playVideo()
+      } catch (err) {
+        console.error('Gagal memutar video setelah handshake:', err)
+      }
+    }
+
+    setIsPlaying(true)
+    setCurrentTimeSeconds(0)
+
+    // Pancarkan sinyal PLAYER_PLAY serempak ke seluruh client
+    sendBroadcast({
+      type: 'PLAYER_PLAY',
+      payload: {
+        currentTime: 0,
+        timestamp: Date.now(),
+        songId,
+      },
+    })
+
+    const targetSong = queueRef.current.find((s) => s.id === songId)
+    saveRoomState({
+      currentSong: targetSong || null,
+      isPlaying: true,
+      currentTime: 0,
+    })
+  }
+
+  // BUFFER HANDSHAKE: Persiapkan pergantian lagu tanpa langsung playVideo (mengatasi buffering skew)
+  const prepareAndChangeSong = (songId: string, activityText?: string) => {
+    const targetIdx = queueRef.current.findIndex((s) => s.id === songId)
+    if (targetIdx === -1) return
+    const targetSong = queueRef.current[targetIdx]
+
+    // Bersihkan timer fallback handshake sebelumnya jika masih ada
+    if (prepareTimeoutRef.current) {
+      clearTimeout(prepareTimeoutRef.current)
+      prepareTimeoutRef.current = null
+    }
+
+    pendingSongId.current = songId
+    isInitiatorForSong.current = true
+    readyClients.current = new Set([clientId])
+
+    // Update antrean dan tunda pemutaran audio agar video buffering di latar belakang
+    setCurrentSongIndex(targetIdx)
+    setCurrentTimeSeconds(0)
+    setTotalDurationSeconds(targetSong?.durationSeconds || 0)
+    setIsPlaying(false)
+
+    const player = getYTPlayer()
+    if (player) {
+      try {
+        if (typeof player.pauseVideo === 'function') player.pauseVideo()
+        if (targetSong.videoId && typeof player.cueVideoById === 'function') {
+          player.cueVideoById(targetSong.videoId, 0)
+        } else if (typeof player.seekTo === 'function') {
+          player.seekTo(0, true)
+        }
+      } catch (err) {
+        // ignore
+      }
+    }
+
+    // Pancarkan sinyal PREPARE_SONG ke pasangan
+    sendBroadcast({
+      type: 'PREPARE_SONG',
+      payload: {
+        songId,
+        videoId: targetSong.videoId,
+        initiatorId: clientId,
+        timestamp: Date.now(),
+      },
+    })
+
+    // Pasang safety fallback timeout selama 2.5 detik (sesuai spesifikasi)
+    prepareTimeoutRef.current = setTimeout(() => {
+      if (pendingSongId.current === songId) {
+        launchPreparedSong(songId)
+      }
+    }, 2500)
+
+    // Jika partner sedang offline / single mode, langsung putar setelah delay mikro
+    if (!isPartnerOnline) {
+      setTimeout(() => {
+        if (pendingSongId.current === songId) {
+          launchPreparedSong(songId)
+        }
+      }, 350)
+    }
+
+    if (activityText) {
+      const now = new Date()
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+      setActivities((prev) => [
+        {
+          id: 'act-' + Date.now(),
+          type: 'play',
+          text: activityText,
+          time: timeStr,
+          user: activeName,
+        },
+        ...prev,
+      ])
     }
   }
 
@@ -398,6 +541,15 @@ export const RoomPage: React.FC = () => {
         const latency = Math.max(0, (Date.now() - timestamp) / 1000)
         const targetTime = currentTime + latency
 
+        // Bersihkan pending handshake jika ada
+        if (prepareTimeoutRef.current) {
+          clearTimeout(prepareTimeoutRef.current)
+          prepareTimeoutRef.current = null
+        }
+        pendingSongId.current = null
+        isInitiatorForSong.current = false
+        readyClients.current.clear()
+
         if (player) {
           try {
             if (typeof player.seekTo === 'function') player.seekTo(targetTime, true)
@@ -421,6 +573,100 @@ export const RoomPage: React.FC = () => {
           },
           ...prev,
         ])
+        break
+      }
+
+      // BUFFER HANDSHAKE: Sinyal persiapan memuat video di latar belakang tanpa play langsung
+      case 'PREPARE_SONG': {
+        const { songId, videoId } = event.payload
+        isInitiatorForSong.current = false
+        pendingSongId.current = songId
+
+        if (prepareTimeoutRef.current) {
+          clearTimeout(prepareTimeoutRef.current)
+          prepareTimeoutRef.current = null
+        }
+
+        setIsPlaying(false)
+        setCurrentTimeSeconds(0)
+
+        setQueue((currentQueue) => {
+          const idx = currentQueue.findIndex((s) => s.id === songId)
+          if (idx !== -1) {
+            setCurrentSongIndex(idx)
+            if (currentQueue[idx]?.durationSeconds) {
+              setTotalDurationSeconds(currentQueue[idx].durationSeconds)
+            }
+          }
+          return currentQueue
+        })
+
+        if (player) {
+          try {
+            if (typeof player.pauseVideo === 'function') player.pauseVideo()
+            const targetVidId = videoId || queueRef.current.find((s) => s.id === songId)?.videoId
+            if (targetVidId && typeof player.cueVideoById === 'function') {
+              player.cueVideoById(targetVidId, 0)
+            } else if (typeof player.seekTo === 'function') {
+              player.seekTo(0, true)
+            }
+          } catch (e) {
+            // ignore
+          }
+        }
+
+        // Segera kirim respons singkat CLIENT_READY ke inisiator
+        sendBroadcast({
+          type: 'CLIENT_READY',
+          payload: {
+            songId,
+            clientId,
+          },
+        })
+        break
+      }
+
+      // BUFFER HANDSHAKE: Respons kesiapan dari perangkat pasangan
+      case 'CLIENT_READY': {
+        const { songId, clientId: readyClientId } = event.payload
+        if (isInitiatorForSong.current && pendingSongId.current === songId) {
+          readyClients.current.add(readyClientId)
+          // Jika kedua perangkat telah membalas CLIENT_READY, luncurkan pemutaran serempak sekarang juga!
+          if (readyClients.current.size >= 2) {
+            launchPreparedSong(songId)
+          }
+        }
+        break
+      }
+
+      // PERIODIC HEARTBEAT SYNC: Koreksi drift halus di sisi penerima jika selisih > 1.5 detik
+      case 'PLAYER_HEARTBEAT': {
+        if (!isHost && isPlaying) {
+          const { currentTime: hostTime, timestamp, songId } = event.payload
+          if (songId && currentSong && songId !== currentSong.id) {
+            break
+          }
+          if (!player) break
+
+          let localTime = currentTimeSeconds
+          if (typeof player.getCurrentTime === 'function') {
+            const t = player.getCurrentTime()
+            if (!isNaN(t)) localTime = t
+          }
+
+          const latency = Math.max(0, (Date.now() - timestamp) / 1000)
+          const targetHostTime = hostTime + latency
+
+          const drift = Math.abs(localTime - targetHostTime)
+          // Jika selisih waktu melebihi 1.5 detik (terjadi drift akibat buffering), eksekusi koreksi otomatis
+          if (drift > 1.5) {
+            if (typeof player.seekTo === 'function') {
+              player.seekTo(targetHostTime, true)
+            }
+            setCurrentTimeSeconds(Math.floor(targetHostTime))
+          }
+          // Abaikan jika selisih di bawah 1.5 detik untuk menghindari glitch audio
+        }
         break
       }
 
@@ -649,17 +895,6 @@ export const RoomPage: React.FC = () => {
     }
   }
 
-  // 8. BROADCAST HELPER UNTUK MENGIRIM EVENT KE PASANGAN
-  const sendBroadcast = (event: BroadcastEvent) => {
-    if (channelRef.current) {
-      channelRef.current.send({
-        type: 'broadcast',
-        event: 'music_sync',
-        payload: event,
-      })
-    }
-  }
-
   // 9. LOGIKA PERSETUJUAN PENGGABUNGAN PLAYLIST DI SISI HOST
   const handleAcceptMergeRequest = () => {
     if (!pendingMergeRequest) return
@@ -765,49 +1000,7 @@ export const RoomPage: React.FC = () => {
 
     const nextIdx = (currentSongIndex + 1) % queue.length
     const nextSong = queue[nextIdx]
-
-    setCurrentSongIndex(nextIdx)
-    setCurrentTimeSeconds(0)
-    setTotalDurationSeconds(nextSong?.durationSeconds || 0)
-    setIsPlaying(true)
-
-    const player = getYTPlayer()
-    if (player) {
-      try {
-        if (typeof player.seekTo === 'function') player.seekTo(0, true)
-        if (typeof player.playVideo === 'function') player.playVideo()
-      } catch (err) {
-        console.error('Gagal memutar lagu berikutnya:', err)
-      }
-    }
-
-    sendBroadcast({
-      type: 'CHANGE_SONG',
-      payload: {
-        songId: nextSong.id,
-        videoId: nextSong.videoId,
-        shouldPlay: true,
-      },
-    })
-
-    saveRoomState({
-      currentSong: nextSong,
-      isPlaying: true,
-      currentTime: 0,
-    })
-
-    const now = new Date()
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-    setActivities((prev) => [
-      {
-        id: 'act-' + Date.now(),
-        type: 'play',
-        text: `Otomatis lanjut ke: ${nextSong.title}`,
-        time: timeStr,
-        user: 'Sistem',
-      },
-      ...prev,
-    ])
+    prepareAndChangeSong(nextSong.id, `Otomatis lanjut ke: ${nextSong.title}`)
   }
 
   // 12. TIMER UPDATE PROGRES DARI YOUTUBE PLAYER SECARA PRESISI & DETEKSI DURASI OTOMATIS
@@ -849,6 +1042,46 @@ export const RoomPage: React.FC = () => {
     }
     return () => clearInterval(interval)
   }, [isPlaying, currentSongIndex])
+
+  // 12b. INTERVAL SINKRONISASI PENJAGA DRIFT (HOST MEMANCARKAN HEARTBEAT SETIAP 5 DETIK)
+  useEffect(() => {
+    let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+
+    if (isHost && isPlaying && currentSong) {
+      heartbeatInterval = setInterval(() => {
+        const player = getYTPlayer()
+        let currentT = currentTimeSeconds
+        if (player && typeof player.getCurrentTime === 'function') {
+          const t = player.getCurrentTime()
+          if (!isNaN(t) && t >= 0) {
+            currentT = t
+          }
+        }
+
+        sendBroadcast({
+          type: 'PLAYER_HEARTBEAT',
+          payload: {
+            currentTime: currentT,
+            timestamp: Date.now(),
+            songId: currentSong.id,
+          },
+        })
+      }, 5000)
+    }
+
+    return () => {
+      if (heartbeatInterval) clearInterval(heartbeatInterval)
+    }
+  }, [isHost, isPlaying, currentSong, currentTimeSeconds])
+
+  // Cleanup timeout handshake saat komponen unmount
+  useEffect(() => {
+    return () => {
+      if (prepareTimeoutRef.current) {
+        clearTimeout(prepareTimeoutRef.current)
+      }
+    }
+  }, [])
 
   // 13. AKSI KONTROL PLAY / PAUSE DARI PENGGUNA LOKAL
   const handleTogglePlay = () => {
@@ -929,132 +1162,21 @@ export const RoomPage: React.FC = () => {
     if (queue.length === 0) return
     const nextIdx = (currentSongIndex + 1) % queue.length
     const nextSong = queue[nextIdx]
-    setCurrentSongIndex(nextIdx)
-    setCurrentTimeSeconds(0)
-    setTotalDurationSeconds(nextSong?.durationSeconds || 0)
-    setIsPlaying(true)
-
-    const player = getYTPlayer()
-    if (player) {
-      try {
-        if (typeof player.seekTo === 'function') player.seekTo(0, true)
-        if (typeof player.playVideo === 'function') player.playVideo()
-      } catch (err) {
-        // ignore
-      }
-    }
-
-    sendBroadcast({
-      type: 'CHANGE_SONG',
-      payload: {
-        songId: nextSong.id,
-        videoId: nextSong.videoId,
-        shouldPlay: true,
-      },
-    })
-
-    saveRoomState({
-      currentSong: nextSong,
-      isPlaying: true,
-      currentTime: 0,
-    })
-
-    const now = new Date()
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-    setActivities((prev) => [
-      {
-        id: 'act-' + Date.now(),
-        type: 'play',
-        text: `${activeName} beralih ke lagu: ${nextSong.title}`,
-        time: timeStr,
-        user: activeName,
-      },
-      ...prev,
-    ])
+    prepareAndChangeSong(nextSong.id, `${activeName} beralih ke lagu: ${nextSong.title}`)
   }
 
   const handleSkipPrev = () => {
     if (queue.length === 0) return
     const prevIdx = currentSongIndex === 0 ? queue.length - 1 : currentSongIndex - 1
     const prevSong = queue[prevIdx]
-    setCurrentSongIndex(prevIdx)
-    setCurrentTimeSeconds(0)
-    setTotalDurationSeconds(prevSong?.durationSeconds || 0)
-    setIsPlaying(true)
-
-    const player = getYTPlayer()
-    if (player) {
-      try {
-        if (typeof player.seekTo === 'function') player.seekTo(0, true)
-        if (typeof player.playVideo === 'function') player.playVideo()
-      } catch (err) {
-        // ignore
-      }
-    }
-
-    sendBroadcast({
-      type: 'CHANGE_SONG',
-      payload: {
-        songId: prevSong.id,
-        videoId: prevSong.videoId,
-        shouldPlay: true,
-      },
-    })
-
-    saveRoomState({
-      currentSong: prevSong,
-      isPlaying: true,
-      currentTime: 0,
-    })
+    prepareAndChangeSong(prevSong.id, `${activeName} beralih ke lagu sebelumnya: ${prevSong.title}`)
   }
 
   // 16. AKSI PUTAR LAGU DARI DAFTAR ANTREAN
   const handlePlaySong = (songId: string) => {
-    const idx = queue.findIndex((s) => s.id === songId)
-    if (idx !== -1) {
-      const selectedSong = queue[idx]
-      setCurrentSongIndex(idx)
-      setCurrentTimeSeconds(0)
-      setTotalDurationSeconds(selectedSong?.durationSeconds || 0)
-      setIsPlaying(true)
-
-      const player = getYTPlayer()
-      if (player) {
-        try {
-          if (typeof player.seekTo === 'function') player.seekTo(0, true)
-          if (typeof player.playVideo === 'function') player.playVideo()
-        } catch (err) {
-          // ignore
-        }
-      }
-
-      sendBroadcast({
-        type: 'CHANGE_SONG',
-        payload: {
-          songId,
-          videoId: selectedSong.videoId,
-          shouldPlay: true,
-        },
-      })
-
-      saveRoomState({
-        currentSong: selectedSong,
-        isPlaying: true,
-        currentTime: 0,
-      })
-
-      const now = new Date()
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-      setActivities((prev) => [
-        {
-          id: 'act-' + Date.now(),
-          type: 'play',
-          text: `Memutar ${selectedSong.title}`,
-          time: timeStr,
-          user: activeName,
-        },
-        ...prev,
-      ])
+    const selectedSong = queue.find((s) => s.id === songId)
+    if (selectedSong) {
+      prepareAndChangeSong(songId, `Memutar ${selectedSong.title}`)
     }
   }
 
@@ -1380,6 +1502,22 @@ export const RoomPage: React.FC = () => {
               isPlaying={isPlaying}
               onPlayerReady={(player) => {
                 playerRef.current = player
+                if (pendingSongId.current) {
+                  if (isInitiatorForSong.current) {
+                    readyClients.current.add(clientId)
+                    if (readyClients.current.size >= 2 || !isPartnerOnline) {
+                      launchPreparedSong(pendingSongId.current)
+                    }
+                  } else {
+                    sendBroadcast({
+                      type: 'CLIENT_READY',
+                      payload: {
+                        songId: pendingSongId.current,
+                        clientId,
+                      },
+                    })
+                  }
+                }
               }}
               onDurationChange={(dur) => {
                 if (dur && dur > 0) {
@@ -1395,12 +1533,29 @@ export const RoomPage: React.FC = () => {
                 }
               }}
               onPlayerStateChange={(state) => {
-                // YouTube API: 1 = playing, 2 = paused, 0 = ended
+                // YouTube API: 1 = playing, 2 = paused, 0 = ended, 5 = cued
                 if (state === 1) setIsPlaying(true)
                 if (state === 2) setIsPlaying(false)
                 if (state === 0) {
                   // AUTO-ADVANCE: Otomatis lanjut ke lagu berikutnya saat video selesai
                   handleAutoAdvanceNext()
+                }
+                // Jika player selesai buffering / cued dan ada pending song, sinyalkan kesiapan client
+                if (state === 5 && pendingSongId.current) {
+                  if (isInitiatorForSong.current) {
+                    readyClients.current.add(clientId)
+                    if (readyClients.current.size >= 2 || !isPartnerOnline) {
+                      launchPreparedSong(pendingSongId.current)
+                    }
+                  } else {
+                    sendBroadcast({
+                      type: 'CLIENT_READY',
+                      payload: {
+                        songId: pendingSongId.current,
+                        clientId,
+                      },
+                    })
+                  }
                 }
               }}
               volume={volume}

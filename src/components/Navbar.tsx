@@ -103,16 +103,16 @@ export const Navbar: React.FC<NavbarProps> = ({
                 OurSync
               </span>
               <span className="text-[10px] tracking-wider uppercase text-[#ec4899] font-bold -mt-1">
-                Private Room
+                Ruang Privat
               </span>
             </div>
           </div>
 
           {/* DESKTOP NAVIGATION ITEMS */}
           <div className="hidden md:flex items-center gap-3">
-            {/* ID Room & Tombol Salin Cepat (Kotak Bersudut Tajam) */}
+            {/* ID Ruangan & Tombol Salin Cepat (Kotak Bersudut Tajam) */}
             <div className="flex items-center gap-2 px-3 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-xs">
-              <span className="text-zinc-600 font-semibold">Room ID:</span>
+              <span className="text-zinc-600 font-semibold">ID Ruangan:</span>
               <span className="font-heading font-bold text-[#ec4899] tracking-wider">
                 {roomId}
               </span>
@@ -137,10 +137,24 @@ export const Navbar: React.FC<NavbarProps> = ({
               </button>
             </div>
 
-            {/* Indikator Status Pasangan Hijau Pastel (Kotak Tajam) */}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200">
-              <span className="inline-block w-2.5 h-2.5 bg-emerald-500"></span>
-              <span className="text-xs font-semibold text-emerald-800">
+            {/* Indikator Status Pasangan (Informative Feedback: Emerald jika online, Abu-abu jika menunggu) */}
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 border transition-colors ${
+                isPartnerOnline
+                  ? 'bg-emerald-50 border-emerald-200'
+                  : 'bg-zinc-100 border-zinc-200'
+              }`}
+            >
+              <span
+                className={`inline-block w-2.5 h-2.5 ${
+                  isPartnerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'
+                }`}
+              ></span>
+              <span
+                className={`text-xs font-semibold ${
+                  isPartnerOnline ? 'text-emerald-800' : 'text-zinc-600'
+                }`}
+              >
                 {isPartnerOnline ? `Online bersama ${partnerName}` : 'Menunggu pasangan...'}
               </span>
             </div>
@@ -276,16 +290,38 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </div>
               )}
 
-              {/* Status Pasangan */}
-              <div className="p-4 bg-emerald-50 border border-emerald-200">
-                <p className="text-[11px] text-emerald-800 uppercase tracking-wider mb-1.5 font-bold">
+              {/* Status Pasangan (Mobile: Emerald jika online, Abu-abu jika menunggu) */}
+              <div
+                className={`p-4 border transition-colors ${
+                  isPartnerOnline
+                    ? 'bg-emerald-50 border-emerald-200'
+                    : 'bg-zinc-100 border-zinc-200'
+                }`}
+              >
+                <p
+                  className={`text-[11px] uppercase tracking-wider mb-1.5 font-bold ${
+                    isPartnerOnline ? 'text-emerald-800' : 'text-zinc-500'
+                  }`}
+                >
                   Status Terhubung
                 </p>
                 <div className="flex items-center gap-2">
-                  <span className="w-2.5 h-2.5 bg-emerald-500 inline-block"></span>
+                  <span
+                    className={`w-2.5 h-2.5 inline-block ${
+                      isPartnerOnline ? 'bg-emerald-500 animate-pulse' : 'bg-zinc-400'
+                    }`}
+                  ></span>
                   <div>
-                    <p className="text-sm font-bold text-[#1e1b1d]">{partnerName}</p>
-                    <p className="text-xs text-emerald-700 font-medium">Online bersama pasangan</p>
+                    <p className="text-sm font-bold text-[#1e1b1d]">
+                      {isPartnerOnline ? partnerName : 'Belum Terhubung'}
+                    </p>
+                    <p
+                      className={`text-xs font-medium ${
+                        isPartnerOnline ? 'text-emerald-700' : 'text-zinc-500'
+                      }`}
+                    >
+                      {isPartnerOnline ? `Online bersama ${partnerName}` : 'Menunggu pasangan...'}
+                    </p>
                   </div>
                 </div>
               </div>
