@@ -79,9 +79,7 @@ export type BroadcastEvent =
   | { type: 'PLAYER_SEEK'; payload: { newTime: number; songId?: string } }
   | { type: 'ADD_QUEUE'; payload: { song: Song } }
   | { type: 'REMOVE_QUEUE'; payload: { songId: string } }
-  | { type: 'CHANGE_SONG'; payload: { songId: string; videoId?: string; shouldPlay?: boolean } }
-  | { type: 'PREPARE_SONG'; payload: { songId: string; videoId?: string; initiatorId: string; timestamp: number } }
-  | { type: 'CLIENT_READY'; payload: { songId: string; clientId: string } }
+  | { type: 'CHANGE_SONG'; payload: { songId: string; videoId?: string; shouldPlay?: boolean; startTime?: number; timestamp?: number } }
   | { type: 'PLAYER_HEARTBEAT'; payload: { currentTime: number; timestamp: number; songId?: string } }
   | { type: 'REORDER_QUEUE'; payload: { queue: Song[] } }
   | { type: 'SEND_LOVE'; payload: { sender: string; timestamp: number } }

@@ -12,6 +12,8 @@ interface MusicPlayerProps {
   onDurationChange?: (duration: number) => void
   volume?: number
   isMuted?: boolean
+  showAutoplayUnlock?: boolean
+  onUnlockAutoplay?: () => void
 }
 
 export const MusicPlayer: React.FC<MusicPlayerProps> = ({
@@ -22,6 +24,8 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   onDurationChange,
   volume = 80,
   isMuted = false,
+  showAutoplayUnlock = false,
+  onUnlockAutoplay,
 }) => {
   const internalPlayerRef = useRef<any>(null)
 
@@ -94,7 +98,32 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   const formattedArtist = cleanArtistName(currentSong.artist)
 
   return (
-    <div className="relative w-full bg-white border border-[#f0dbe2] shadow-sm p-5 sm:p-7 transition-all">
+    <div className="relative w-full bg-white border border-[#f0dbe2] shadow-sm p-5 sm:p-7 transition-all overflow-hidden">
+      {/* OVERLAY USER GESTURE UNTUK UNLOCK AUTOPLAY BROWSER HP */}
+      {showAutoplayUnlock && (
+        <div className="absolute inset-0 z-40 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center p-4 text-center animate-fadeIn">
+          <div className="bg-white border-2 border-zinc-900 shadow-2xl p-5 sm:p-6 max-w-sm w-full flex flex-col items-center">
+            <div className="w-12 h-12 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] flex items-center justify-center mb-3">
+              <Sparkles className="w-6 h-6 animate-pulse" />
+            </div>
+            <p className="font-heading font-black text-base text-[#1e1b1d] mb-1">
+              Audio Menunggu Izin Browser
+            </p>
+            <p className="text-xs text-zinc-500 mb-4">
+              Browser HP memerlukan satu ketukan untuk memulai audio dan menyelaraskannya dengan pasangan.
+            </p>
+            <button
+              type="button"
+              onClick={onUnlockAutoplay}
+              className="w-full flex items-center justify-center gap-2 px-5 py-3 bg-[#ec4899] hover:bg-[#db2777] active:scale-95 text-white font-extrabold text-sm border-2 border-zinc-900 shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] cursor-pointer transition-all animate-bounce"
+            >
+              <Music2 className="w-4 h-4" />
+              <span>Ketuk untuk Menyelaraskan Audio</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 
         Sembunyikan IFrame Bawaan YouTube Standar di Luar Layar:
         Audio & API kontrol YouTube tetap berjalan 100% aktif di latar belakang tanpa menampilkan pemutar mentah.
