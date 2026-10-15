@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import type { Song } from '../types'
-import { extractYouTubeId, getYouTubeThumbnail } from '../utils/youtube'
+import { extractYouTubeId, getYouTubeThumbnail, fetchYouTubeVideoInfo } from '../utils/youtube'
 import {
   Search,
   Plus,
@@ -9,71 +9,85 @@ import {
   Music2,
   Clock,
   Link2,
-  ChevronUp,
-  ChevronDown,
   GripVertical,
+  Loader2,
+  Bookmark,
+  BookmarkCheck,
+  BookmarkPlus,
 } from 'lucide-react'
 
 interface PlaylistQueueProps {
   queue: Song[]
+  personalPlaylist?: Song[]
   currentSongId?: string
   onPlaySong: (songId: string) => void
   onRemoveSong: (songId: string) => void
   onAddSong: (newSong: Omit<Song, 'id'>) => void
   onReorderQueue?: (newQueue: Song[]) => void
+  onImportPersonalPlaylist?: () => void
+  onSaveToPersonalPlaylist?: (song: Song) => void
 }
 
 export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
   queue,
+  personalPlaylist = [],
   currentSongId,
   onPlaySong,
   onRemoveSong,
   onAddSong,
   onReorderQueue,
+  onImportPersonalPlaylist,
+  onSaveToPersonalPlaylist,
 }) => {
   const [searchQuery, setSearchQuery] = useState('')
   const [showAddForm, setShowAddForm] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newArtist, setNewArtist] = useState('')
   const [newUrl, setNewUrl] = useState('')
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
 
-  const handleSearchSubmit = (e: React.FormEvent) => {
+  const handleSearchSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!searchQuery.trim()) return
+    if (!searchQuery.trim() || isSubmitting) return
 
     const input = searchQuery.trim()
     const extractedId = extractYouTubeId(input)
+    setIsSubmitting(true)
 
-    if (extractedId) {
-      onAddSong({
-        title: `YouTube Track (${extractedId.substring(0, 6)}...)`,
-        artist: 'YouTube Video',
-        duration: '03:45',
-        durationSeconds: 225,
-        thumbnail: getYouTubeThumbnail(extractedId),
-        videoId: extractedId,
-        url: input,
-        addedBy: 'Kamu',
-      })
-    } else {
-      onAddSong({
-        title: input,
-        artist: 'Pilihan Spesial',
-        duration: '03:15',
-        durationSeconds: 195,
-        thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?auto=format&fit=crop&w=400&q=80',
-        videoId: 'GxldQ9eX2wo',
-        addedBy: 'Kamu',
-      })
+    try {
+      if (extractedId) {
+        const info = await fetchYouTubeVideoInfo(extractedId)
+        onAddSong({
+          title: info.title || `YouTube Track (${extractedId.substring(0, 6)}...)`,
+          artist: info.author || 'YouTube Video',
+          duration: '--:--',
+          durationSeconds: 0,
+          thumbnail: getYouTubeThumbnail(extractedId),
+          videoId: extractedId,
+          url: input,
+          addedBy: 'Kamu',
+        })
+      } else {
+        onAddSong({
+          title: input,
+          artist: 'Pilihan Spesial',
+          duration: '--:--',
+          durationSeconds: 0,
+          thumbnail: 'https://images.unsplash.com/photo-1518609878373-06d740f60d8b?auto=format&fit=crop&w=400&q=80',
+          videoId: 'GxldQ9eX2wo',
+          addedBy: 'Kamu',
+        })
+      }
+    } finally {
+      setIsSubmitting(false)
+      setSearchQuery('')
     }
-
-    setSearchQuery('')
   }
 
-  const handleManualAdd = (e: React.FormEvent) => {
+  const handleManualAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!newTitle.trim()) return
+    if (!newTitle.trim() || isSubmitting) return
 
     const extractedId = newUrl ? extractYouTubeId(newUrl) : null
     const videoId = extractedId || 'GxldQ9eX2wo'
@@ -81,41 +95,35 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
       ? getYouTubeThumbnail(extractedId)
       : 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=400&q=80'
 
-    onAddSong({
-      title: newTitle.trim(),
-      artist: newArtist.trim() || 'Artis Romantis',
-      duration: '03:30',
-      durationSeconds: 210,
-      thumbnail,
-      videoId,
-      url: newUrl.trim() || undefined,
-      addedBy: 'Kamu',
-    })
+    setIsSubmitting(true)
+    try {
+      let finalArtist = newArtist.trim()
+      let finalTitle = newTitle.trim()
 
-    setNewTitle('')
-    setNewArtist('')
-    setNewUrl('')
-    setShowAddForm(false)
-  }
+      if (extractedId && (!finalArtist || finalTitle.length < 3)) {
+        const info = await fetchYouTubeVideoInfo(extractedId)
+        if (info.author && !finalArtist) finalArtist = info.author
+        if (info.title && finalTitle.length < 3) finalTitle = info.title
+      }
 
-  // Pindahkan urutan lagu ke atas
-  const handleMoveUp = (index: number) => {
-    if (index <= 0 || !onReorderQueue) return
-    const newQueue = [...queue]
-    const temp = newQueue[index]
-    newQueue[index] = newQueue[index - 1]
-    newQueue[index - 1] = temp
-    onReorderQueue(newQueue)
-  }
+      onAddSong({
+        title: finalTitle,
+        artist: finalArtist || 'Artis Musik',
+        duration: '--:--',
+        durationSeconds: 0,
+        thumbnail,
+        videoId,
+        url: newUrl.trim() || undefined,
+        addedBy: 'Kamu',
+      })
 
-  // Pindahkan urutan lagu ke bawah
-  const handleMoveDown = (index: number) => {
-    if (index >= queue.length - 1 || !onReorderQueue) return
-    const newQueue = [...queue]
-    const temp = newQueue[index]
-    newQueue[index] = newQueue[index + 1]
-    newQueue[index + 1] = temp
-    onReorderQueue(newQueue)
+      setNewTitle('')
+      setNewArtist('')
+      setNewUrl('')
+      setShowAddForm(false)
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   // HTML5 Drag and Drop handlers
@@ -159,19 +167,34 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
               Antrean Bersama
             </h3>
             <p className="text-xs text-zinc-500 font-sans">
-              {queue.length} lagu &bull; Tarik atau klik panah untuk atur urutan
+              {queue.length} lagu &bull; Tarik ikon geser untuk mengatur urutan
             </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="px-3.5 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] hover:bg-[#ec4899] hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>{showAddForm ? 'Tutup Form' : 'Tambah Lagu'}</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {personalPlaylist.length > 0 && onImportPersonalPlaylist && (
+            <button
+              type="button"
+              onClick={onImportPersonalPlaylist}
+              className="px-3 py-1.5 bg-white hover:bg-[#fdf2f6] border border-zinc-300 hover:border-[#f9a8d4] text-zinc-700 hover:text-[#ec4899] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+              title="Muat lagu dari koleksi playlist pribadi akun ke antrean ruangan saat ini"
+            >
+              <Bookmark className="w-3.5 h-3.5 text-[#ec4899]" />
+              <span className="hidden sm:inline">Koleksi Pribadi</span>
+              <span className="font-bold text-[#ec4899]">({personalPlaylist.length})</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setShowAddForm(!showAddForm)}
+            className="px-3.5 py-1.5 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] hover:bg-[#ec4899] hover:text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>{showAddForm ? 'Tutup Form' : 'Tambah Lagu'}</span>
+          </button>
+        </div>
       </div>
 
       {/* Kotak Pencarian Tautan/Judul Lagu Bersudut Siku Tajam */}
@@ -187,9 +210,14 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
           />
           <button
             type="submit"
-            className="absolute right-1 px-3 py-1.5 bg-[#ec4899] hover:bg-[#db2777] text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
+            disabled={isSubmitting}
+            className="absolute right-1 px-3 py-1.5 bg-[#ec4899] hover:bg-[#db2777] disabled:opacity-50 text-white text-xs font-bold transition-colors cursor-pointer flex items-center gap-1"
           >
-            <Plus className="w-3 h-3" />
+            {isSubmitting ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : (
+              <Plus className="w-3 h-3" />
+            )}
             <span>Tambah</span>
           </button>
         </div>
@@ -209,7 +237,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
               type="text"
               value={newTitle}
               onChange={(e) => setNewTitle(e.target.value)}
-              placeholder="Judul Lagu (Contoh: Lover)"
+              placeholder="Judul Lagu (Contoh: Toxic)"
               className="w-full px-3.5 py-2 bg-white border border-zinc-300 text-[#1e1b1d] placeholder:text-zinc-400 focus:outline-none focus:border-[#ec4899]"
               required
             />
@@ -217,7 +245,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
               type="text"
               value={newArtist}
               onChange={(e) => setNewArtist(e.target.value)}
-              placeholder="Nama Artis (Contoh: Taylor Swift)"
+              placeholder="Nama Artis (Contoh: Britney Spears)"
               className="w-full px-3.5 py-2 bg-white border border-zinc-300 text-[#1e1b1d] placeholder:text-zinc-400 focus:outline-none focus:border-[#ec4899]"
             />
             <div className="relative">
@@ -233,23 +261,52 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
           </div>
           <button
             type="submit"
-            className="w-full py-2.5 bg-[#ec4899] hover:bg-[#db2777] text-white font-bold cursor-pointer transition-colors"
+            disabled={isSubmitting}
+            className="w-full py-2.5 bg-[#ec4899] hover:bg-[#db2777] disabled:opacity-50 text-white font-bold cursor-pointer transition-colors flex items-center justify-center gap-1.5"
           >
-            Masukkan ke Antrean
+            {isSubmitting && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+            <span>Masukkan ke Antrean</span>
           </button>
         </form>
       )}
 
-      {/* DAFTAR ANTREAN LAGU DENGAN DUKUNGAN REORDERING (DRAG & DROP + PANAH NAIK/TURUN) */}
+      {/* DAFTAR ANTREAN LAGU DENGAN DUKUNGAN REORDERING (DRAG & DROP) */}
       <div className="mt-4 space-y-2.5 overflow-y-auto max-h-[380px] pr-1 flex-1">
         {filteredQueue.length === 0 ? (
-          <div className="text-center py-8 text-zinc-400 text-xs">
-            Tidak ada lagu yang cocok dengan pencarian
+          <div className="text-center py-8 px-4 text-zinc-400 text-xs">
+            {queue.length === 0 ? (
+              <div className="space-y-3">
+                <Music2 className="w-8 h-8 mx-auto text-zinc-300" />
+                <div>
+                  <p className="font-semibold text-zinc-700 text-sm">Antrean Ruangan Masih Kosong</p>
+                  <p className="text-[11px] text-zinc-400 mt-0.5">
+                    Cari atau tempel tautan YouTube di atas untuk menambahkan musik ke ruangan ini.
+                  </p>
+                </div>
+                {personalPlaylist.length > 0 && onImportPersonalPlaylist && (
+                  <div className="pt-2">
+                    <button
+                      type="button"
+                      onClick={onImportPersonalPlaylist}
+                      className="px-4 py-2 bg-[#fdf2f6] hover:bg-[#ec4899] text-[#ec4899] hover:text-white border border-[#f9a8d4] text-xs font-bold transition-colors cursor-pointer inline-flex items-center gap-2"
+                    >
+                      <Bookmark className="w-3.5 h-3.5 fill-current" />
+                      <span>Impor {personalPlaylist.length} Lagu dari Koleksi Pribadi Saya</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              'Tidak ada lagu yang cocok dengan pencarian'
+            )}
           </div>
         ) : (
           filteredQueue.map((song, index) => {
             const isCurrent = song.id === currentSongId
             const isDragging = draggedIndex === index
+            const isSavedInPersonal = personalPlaylist.some(
+              (p) => p.id === song.id || (p.videoId && p.videoId === song.videoId) || p.title === song.title
+            )
 
             return (
               <div
@@ -271,7 +328,7 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                   {/* Grip Handle Drag & Drop */}
                   <div
                     className="cursor-grab active:cursor-grabbing text-zinc-400 hover:text-[#ec4899] transition-colors p-0.5"
-                    title="Tahan dan geser untuk ubah urutan"
+                    title="Tahan dan geser untuk ubah urutan antrean"
                   >
                     <GripVertical className="w-4 h-4" />
                   </div>
@@ -310,38 +367,37 @@ export const PlaylistQueue: React.FC<PlaylistQueueProps> = ({
                   </div>
                 </div>
 
-                {/* Tombol Reorder Cepat (Naik / Turun) & Aksi */}
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Tombol Geser Urutan Naik / Turun */}
-                  {!searchQuery && (
-                    <div className="flex flex-col border border-zinc-200 bg-zinc-50 mr-1">
-                      <button
-                        type="button"
-                        onClick={() => handleMoveUp(index)}
-                        disabled={index === 0}
-                        className="p-1 hover:bg-[#fdf2f6] text-zinc-500 hover:text-[#ec4899] disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                        title="Pindahkan lagu ke atas"
-                        aria-label="Pindah ke atas"
-                      >
-                        <ChevronUp className="w-3 h-3" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleMoveDown(index)}
-                        disabled={index === queue.length - 1}
-                        className="p-1 hover:bg-[#fdf2f6] text-zinc-500 hover:text-[#ec4899] disabled:opacity-25 disabled:cursor-not-allowed transition-colors cursor-pointer"
-                        title="Pindahkan lagu ke bawah"
-                        aria-label="Pindah ke bawah"
-                      >
-                        <ChevronDown className="w-3 h-3" />
-                      </button>
-                    </div>
-                  )}
-
+                {/* Info Durasi Akurat & Tombol Aksi */}
+                <div className="flex items-center gap-1.5 shrink-0">
                   <div className="flex items-center gap-1 text-[11px] text-zinc-500 font-mono hidden sm:flex mr-1">
                     <Clock className="w-3 h-3 text-zinc-400" />
-                    <span>{song.duration}</span>
+                    <span>{song.duration || '--:--'}</span>
                   </div>
+
+                  {/* Tombol Simpan ke Playlist Pribadi */}
+                  {onSaveToPersonalPlaylist && (
+                    <button
+                      type="button"
+                      onClick={() => onSaveToPersonalPlaylist(song)}
+                      className={`p-1.5 border transition-colors cursor-pointer ${
+                        isSavedInPersonal
+                          ? 'bg-[#fdf2f6] border-[#f9a8d4] text-[#ec4899]'
+                          : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-400 hover:text-zinc-700 border-zinc-200'
+                      }`}
+                      title={
+                        isSavedInPersonal
+                          ? 'Tersimpan di Playlist Pribadi (Klik untuk hapus)'
+                          : 'Simpan ke Playlist Pribadi Akun'
+                      }
+                      aria-label="Simpan ke Playlist Pribadi"
+                    >
+                      {isSavedInPersonal ? (
+                        <BookmarkCheck className="w-3.5 h-3.5 fill-current" />
+                      ) : (
+                        <BookmarkPlus className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  )}
 
                   {/* Tombol Putar */}
                   {!isCurrent && (

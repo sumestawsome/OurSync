@@ -11,33 +11,29 @@ import {
   JoinerMergeChoiceModal,
   HostApprovalModal,
 } from '../components/MergePlaylistModal'
-import {
-  initialPlaylist,
-  initialMessages,
-  initialActivities,
-} from '../data/mockData'
 import type { Song, ChatMessage, ActivityLog, BroadcastEvent } from '../types'
 import { supabase } from '../lib/supabaseClient'
 import { useAuth } from '../context/AuthContext'
-import { getPersonalPlaylist, savePersonalPlaylist } from '../utils/personalPlaylist'
+import { loadPersonalPlaylist, savePersonalPlaylist } from '../utils/personalPlaylist'
+import { formatDuration } from '../utils/youtube'
 
 export const RoomPage: React.FC = () => {
   const { roomId } = useParams<{ roomId: string }>()
   const navigate = useNavigate()
-  const { activeName, activeId } = useAuth()
+  const { activeName, activeId, isGoogleUser, loading: authLoading } = useAuth()
 
-  // State antrean & pemutar
-  const [queue, setQueue] = useState<Song[]>(initialPlaylist)
+  // State antrean & pemutar (KOSONG secara default untuk ruangan baru)
+  const [queue, setQueue] = useState<Song[]>([])
   const [currentSongIndex, setCurrentSongIndex] = useState(0)
   const [isPlaying, setIsPlaying] = useState(false)
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0)
-  const [totalDurationSeconds, setTotalDurationSeconds] = useState(177)
+  const [totalDurationSeconds, setTotalDurationSeconds] = useState(0)
   const [volume, setVolume] = useState(80)
   const [isMuted, setIsMuted] = useState(false)
 
-  // State chat & aktivitas & partikel afeksi
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages)
-  const [activities, setActivities] = useState<ActivityLog[]>(initialActivities)
+  // State chat & aktivitas & partikel afeksi (KOSONG secara default)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [activities, setActivities] = useState<ActivityLog[]>([])
   const [hearts, setHearts] = useState<HeartParticle[]>([])
 
   // State kehadiran pasangan (Presence)
@@ -68,7 +64,9 @@ export const RoomPage: React.FC = () => {
     return playerRef.current.internalPlayer || playerRef.current
   }
 
-  // Helper untuk menyimpan state room ke database Supabase (tabel rooms)
+  // Helper untuk menyimpan state room:
+  // - Transient Room Queue khusus sesi room_id
+  // - Simpan ke Supabase tabel rooms dan LocalStorage
   const saveRoomState = async (updates: {
     playlist?: Song[]
     currentSong?: Song | null
@@ -76,12 +74,28 @@ export const RoomPage: React.FC = () => {
     currentTime?: number
   }) => {
     if (!roomId) return
-    try {
-      const activeQueue = updates.playlist ?? queue
-      const activeSong = updates.currentSong !== undefined ? updates.currentSong : currentSong
-      const activePlaying = updates.isPlaying ?? isPlaying
-      const activeTime = updates.currentTime ?? currentTimeSeconds
+    const activeQueue = updates.playlist ?? queue
+    const activeSong = updates.currentSong !== undefined ? updates.currentSong : currentSong
+    const activePlaying = updates.isPlaying ?? isPlaying
+    const activeTime = updates.currentTime ?? currentTimeSeconds
 
+    // Simpan ke Local Storage (cadangan lokal)
+    if (typeof window !== 'undefined') {
+      try {
+        localStorage.setItem(`oursync_room_${roomId}`, JSON.stringify({
+          playlist: activeQueue,
+          currentSong: activeSong,
+          isPlaying: activePlaying,
+          currentTime: activeTime,
+          updatedAt: new Date().toISOString(),
+        }))
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // Simpan ke database Supabase tabel rooms agar sinkron lintas perangkat
+    try {
       await supabase.from('rooms').upsert({
         room_id: roomId,
         playlist: activeQueue,
@@ -95,11 +109,12 @@ export const RoomPage: React.FC = () => {
     }
   }
 
-  // 1. FETCH PERSISTENSI DATA ROOM DARI TABEL SUPABASE (ROOMS)
+  // 1. FETCH DATA ANTREAN RUANGAN (DARI SUPABASE ATAU LOCAL STORAGE)
   useEffect(() => {
     if (!roomId) return
 
     const loadRoomData = async () => {
+      // 1. Prioritaskan ambil antrean ruangan dari database Supabase
       try {
         const { data, error } = await supabase
           .from('rooms')
@@ -107,79 +122,160 @@ export const RoomPage: React.FC = () => {
           .eq('room_id', roomId)
           .maybeSingle()
 
-        if (data && !error) {
-          if (Array.isArray(data.playlist) && data.playlist.length > 0) {
-            setQueue(data.playlist)
-            if (data.current_song) {
-              const idx = data.playlist.findIndex((s: Song) => s.id === data.current_song.id)
-              if (idx !== -1) {
-                setCurrentSongIndex(idx)
+        if (data && !error && Array.isArray(data.playlist) && data.playlist.length > 0) {
+          setQueue(data.playlist)
+          if (data.current_song) {
+            const idx = data.playlist.findIndex((s: Song) => s.id === data.current_song.id)
+            if (idx !== -1) {
+              setCurrentSongIndex(idx)
+              if (data.current_song.durationSeconds) {
+                setTotalDurationSeconds(data.current_song.durationSeconds)
               }
             }
           }
           if (typeof data.current_time === 'number') {
             setCurrentTimeSeconds(Math.floor(data.current_time))
           }
-        } else {
-          // Inisialisasi awal jika room belum ada di database
-          await supabase.from('rooms').upsert({
-            room_id: roomId,
-            playlist: initialPlaylist,
-            current_song: initialPlaylist[0],
-            is_playing: false,
-            current_time: 0,
-            updated_at: new Date().toISOString(),
-          })
+          if (typeof data.is_playing === 'boolean') {
+            setIsPlaying(data.is_playing)
+          }
+          return
         }
       } catch (err) {
-        console.warn('Info persistensi room:', err)
+        console.warn('Info persistensi room Supabase:', err)
       }
+
+      // 2. Jika belum ada di Supabase, periksa Local Storage
+      if (typeof window !== 'undefined') {
+        try {
+          const local = localStorage.getItem(`oursync_room_${roomId}`)
+          if (local) {
+            const parsed = JSON.parse(local)
+            if (Array.isArray(parsed.playlist) && parsed.playlist.length > 0) {
+              setQueue(parsed.playlist)
+              if (parsed.currentSong) {
+                const idx = parsed.playlist.findIndex((s: Song) => s.id === parsed.currentSong.id)
+                if (idx !== -1) {
+                  setCurrentSongIndex(idx)
+                  if (parsed.currentSong.durationSeconds) {
+                    setTotalDurationSeconds(parsed.currentSong.durationSeconds)
+                  }
+                }
+              }
+              if (typeof parsed.currentTime === 'number') {
+                setCurrentTimeSeconds(Math.floor(parsed.currentTime))
+              }
+              if (typeof parsed.isPlaying === 'boolean') {
+                setIsPlaying(parsed.isPlaying)
+              }
+              return
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // 3. Jika ruangan baru dan pengguna adalah HOST:
+      // Ambil template awal HANYA dari koleksi pribadi akun host (read-only snapshot)
+      if (isHost) {
+        try {
+          const personalSongs = await loadPersonalPlaylist(activeId, isGoogleUser)
+          if (personalSongs && personalSongs.length > 0) {
+            const initialQueue = personalSongs.map((s) => ({ ...s }))
+            setQueue(initialQueue)
+            setCurrentSongIndex(0)
+            setCurrentTimeSeconds(0)
+            setTotalDurationSeconds(initialQueue[0]?.durationSeconds || 0)
+            saveRoomState({
+              playlist: initialQueue,
+              currentSong: initialQueue[0] || null,
+              isPlaying: false,
+              currentTime: 0,
+            })
+            return
+          }
+        } catch (err) {
+          console.warn('Gagal memuat template koleksi pribadi untuk room baru:', err)
+        }
+      }
+
+      // Jika ruangan baru tanpa template koleksi: antrean KOSONG
+      setQueue([])
+      setCurrentSongIndex(0)
+      setCurrentTimeSeconds(0)
+      setTotalDurationSeconds(0)
     }
 
     loadRoomData()
-  }, [roomId])
+  }, [roomId, isHost, activeId, isGoogleUser])
 
-  // 2. FETCH OBROLAN PERSISTEN DARI TABEL SUPABASE (DIRECT_MESSAGES)
+  // 2. FETCH OBROLAN (DARI SUPABASE JIKA LOGIN GOOGLE, ATAU LOCAL STORAGE JIKA GUEST)
   useEffect(() => {
     if (!roomId) return
 
     const loadDirectMessages = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('direct_messages')
-          .select('*')
-          .eq('room_id', roomId)
-          .order('created_at', { ascending: true })
-          .limit(100)
+      // Jika login Google: ambil pesan persisten dari database Supabase
+      if (isGoogleUser) {
+        try {
+          const { data, error } = await supabase
+            .from('direct_messages')
+            .select('*')
+            .eq('room_id', roomId)
+            .order('created_at', { ascending: true })
+            .limit(100)
 
-        if (data && !error && data.length > 0) {
-          const formatted: ChatMessage[] = data.map((m: any) => {
-            const date = new Date(m.created_at)
-            const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
-            return {
-              id: m.id || 'msg-' + Date.now(),
-              sender: m.sender_name || 'Pasangan',
-              text: m.message,
-              timestamp: timeStr,
-              isSelf: m.sender_id === activeId,
-            }
-          })
-          setMessages(formatted)
+          if (data && !error && data.length > 0) {
+            const formatted: ChatMessage[] = data.map((m: any) => {
+              const date = new Date(m.created_at)
+              const timeStr = `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
+              return {
+                id: m.id || 'msg-' + Date.now(),
+                sender: m.sender_name || 'Pasangan',
+                text: m.message,
+                timestamp: timeStr,
+                isSelf: m.sender_id === activeId,
+              }
+            })
+            setMessages(formatted)
+            return
+          }
+        } catch (err) {
+          console.warn('Gagal memuat pesan obrolan persisten dari database:', err)
         }
-      } catch (err) {
-        console.warn('Gagal memuat pesan obrolan persisten dari database:', err)
       }
+
+      // Jika Guest: ambil pesan dari Local Storage
+      if (typeof window !== 'undefined') {
+        try {
+          const localChat = localStorage.getItem(`oursync_chat_${roomId}`)
+          if (localChat) {
+            const parsed = JSON.parse(localChat)
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setMessages(parsed)
+              return
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // Ruangan baru: riwayat obrolan KOSONG
+      setMessages([])
     }
 
     loadDirectMessages()
-  }, [roomId, activeId])
+  }, [roomId, activeId, isGoogleUser])
 
   // 3. CEK PLAYLIST PRIBADI UNTUK PENGGUNA YANG BERGABUNG (JOINER)
   useEffect(() => {
-    if (!roomId) return
+    if (!roomId || authLoading) return
+    let isMounted = true
 
     const checkPersonalPlaylist = async () => {
-      const pPlaylist = await getPersonalPlaylist(activeId)
+      const pPlaylist = await loadPersonalPlaylist(activeId, isGoogleUser)
+      if (!isMounted) return
       setPersonalPlaylist(pPlaylist)
 
       // Jika bukan Host dan memiliki lagu di playlist pribadi, tanyakan pilihan penggabungan sekali saja
@@ -190,7 +286,11 @@ export const RoomPage: React.FC = () => {
     }
 
     checkPersonalPlaylist()
-  }, [roomId, activeId, isHost])
+
+    return () => {
+      isMounted = false
+    }
+  }, [roomId, activeId, isHost, isGoogleUser, authLoading])
 
   // 4. SUPABASE REALTIME CHANNEL (BROADCAST & PRESENCE)
   useEffect(() => {
@@ -268,6 +368,16 @@ export const RoomPage: React.FC = () => {
           await channel.track({
             user: activeName,
             online_at: new Date().toISOString(),
+          })
+
+          // Minta sinkronisasi antrean sesi ruangan terkini dari host/peer aktif
+          channel.send({
+            type: 'broadcast',
+            event: 'music_sync',
+            payload: {
+              type: 'REQUEST_ROOM_SYNC',
+              payload: { requesterId: clientId },
+            },
           })
         }
       })
@@ -446,7 +556,17 @@ export const RoomPage: React.FC = () => {
           timestamp: timeStr,
           isSelf: false,
         }
-        setMessages((prev) => [...prev, incomingMsg])
+        setMessages((prev) => {
+          const next = [...prev, incomingMsg]
+          if (!isGoogleUser && typeof window !== 'undefined') {
+            try {
+              localStorage.setItem(`oursync_chat_${roomId}`, JSON.stringify(next))
+            } catch {
+              // ignore
+            }
+          }
+          return next
+        })
         break
       }
 
@@ -486,6 +606,43 @@ export const RoomPage: React.FC = () => {
             },
             ...prev,
           ])
+        }
+        break
+      }
+
+      // 7a. PERMINTAAN SINKRONISASI ANTREAN RUANGAN DARI PEER
+      case 'REQUEST_ROOM_SYNC': {
+        if (queue.length > 0) {
+          sendBroadcast({
+            type: 'RESPONSE_ROOM_SYNC',
+            payload: {
+              queue,
+              currentSongIndex,
+              isPlaying,
+              currentTime: currentTimeSeconds,
+            },
+          })
+        }
+        break
+      }
+
+      // 7b. RESPON SINKRONISASI ANTREAN RUANGAN YANG DITERIMA DARI PEER/HOST
+      case 'RESPONSE_ROOM_SYNC': {
+        const { queue: syncedQueue, currentSongIndex: syncedIdx, isPlaying: syncedPlaying, currentTime: syncedTime } = event.payload
+        if (Array.isArray(syncedQueue) && syncedQueue.length > 0) {
+          setQueue(syncedQueue)
+          if (typeof syncedIdx === 'number' && syncedQueue[syncedIdx]) {
+            setCurrentSongIndex(syncedIdx)
+            if (syncedQueue[syncedIdx].durationSeconds) {
+              setTotalDurationSeconds(syncedQueue[syncedIdx].durationSeconds)
+            }
+          }
+          if (typeof syncedTime === 'number') {
+            setCurrentTimeSeconds(Math.floor(syncedTime))
+          }
+          if (typeof syncedPlaying === 'boolean') {
+            setIsPlaying(syncedPlaying)
+          }
         }
         break
       }
@@ -577,12 +734,14 @@ export const RoomPage: React.FC = () => {
 
   // 10. AKSI JOINER MENGIRIM PERMINTAAN GABUNG PLAYLIST KE HOST
   const handleRequestMergePlaylist = () => {
+    // Ambil salinan array read-only agar koleksi pribadi joiner tidak termutasi
+    const songsToMerge = personalPlaylist.map((s) => ({ ...s }))
     sendBroadcast({
       type: 'REQUEST_MERGE_PLAYLIST',
       payload: {
         requesterId: activeId,
         requesterName: activeName,
-        songs: personalPlaylist,
+        songs: songsToMerge,
       },
     })
 
@@ -609,6 +768,7 @@ export const RoomPage: React.FC = () => {
 
     setCurrentSongIndex(nextIdx)
     setCurrentTimeSeconds(0)
+    setTotalDurationSeconds(nextSong?.durationSeconds || 0)
     setIsPlaying(true)
 
     const player = getYTPlayer()
@@ -650,7 +810,7 @@ export const RoomPage: React.FC = () => {
     ])
   }
 
-  // 12. TIMER UPDATE PROGRES DARI YOUTUBE PLAYER SECARA PRESISI
+  // 12. TIMER UPDATE PROGRES DARI YOUTUBE PLAYER SECARA PRESISI & DETEKSI DURASI OTOMATIS
   useEffect(() => {
     let interval: ReturnType<typeof setInterval>
     if (isPlaying) {
@@ -663,13 +823,32 @@ export const RoomPage: React.FC = () => {
               setCurrentTimeSeconds(Math.floor(time))
             }
           }
+          if (player && typeof player.getDuration === 'function') {
+            const dur = player.getDuration()
+            if (dur && dur > 0) {
+              const safeDur = Math.floor(dur)
+              const formatted = formatDuration(safeDur)
+              setTotalDurationSeconds((prev) => (prev !== safeDur ? safeDur : prev))
+              setQueue((prevQueue) => {
+                const current = prevQueue[currentSongIndex]
+                if (current && (current.duration !== formatted || current.durationSeconds !== safeDur)) {
+                  return prevQueue.map((s, idx) =>
+                    idx === currentSongIndex
+                      ? { ...s, duration: formatted, durationSeconds: safeDur }
+                      : s
+                  )
+                }
+                return prevQueue
+              })
+            }
+          }
         } catch (err) {
           // ignore
         }
       }, 1000)
     }
     return () => clearInterval(interval)
-  }, [isPlaying])
+  }, [isPlaying, currentSongIndex])
 
   // 13. AKSI KONTROL PLAY / PAUSE DARI PENGGUNA LOKAL
   const handleTogglePlay = () => {
@@ -752,6 +931,7 @@ export const RoomPage: React.FC = () => {
     const nextSong = queue[nextIdx]
     setCurrentSongIndex(nextIdx)
     setCurrentTimeSeconds(0)
+    setTotalDurationSeconds(nextSong?.durationSeconds || 0)
     setIsPlaying(true)
 
     const player = getYTPlayer()
@@ -799,6 +979,7 @@ export const RoomPage: React.FC = () => {
     const prevSong = queue[prevIdx]
     setCurrentSongIndex(prevIdx)
     setCurrentTimeSeconds(0)
+    setTotalDurationSeconds(prevSong?.durationSeconds || 0)
     setIsPlaying(true)
 
     const player = getYTPlayer()
@@ -834,6 +1015,7 @@ export const RoomPage: React.FC = () => {
       const selectedSong = queue[idx]
       setCurrentSongIndex(idx)
       setCurrentTimeSeconds(0)
+      setTotalDurationSeconds(selectedSong?.durationSeconds || 0)
       setIsPlaying(true)
 
       const player = getYTPlayer()
@@ -876,7 +1058,8 @@ export const RoomPage: React.FC = () => {
     }
   }
 
-  // 17. AKSI TAMBAH LAGU KE ANTREAN BERSAMA & PLAYLIST PRIBADI
+  // 17. AKSI TAMBAH LAGU KE ANTREAN RUANGAN (ROOM QUEUE)
+  // Perhatian: Hanya menambahkan ke sesi antrean ruangan aktif, TIDAK mengubah Playlist Pribadi akun
   const handleAddSong = (newSongData: Omit<Song, 'id'>) => {
     const newSong: Song = {
       ...newSongData,
@@ -893,10 +1076,35 @@ export const RoomPage: React.FC = () => {
 
     saveRoomState({ playlist: updatedQueue })
 
-    // Simpan juga ke playlist pribadi pengguna aktif
-    const updatedPersonal = [...personalPlaylist, newSong]
-    setPersonalPlaylist(updatedPersonal)
-    savePersonalPlaylist(activeId, updatedPersonal)
+    const now = new Date()
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    setActivities((prev) => [
+      {
+        id: 'act-' + Date.now(),
+        type: 'add_song',
+        text: `${activeName} menambahkan "${newSong.title}" ke antrean`,
+        time: timeStr,
+        user: activeName,
+      },
+      ...prev,
+    ])
+  }
+
+  // 17a. AKSI SIMPAN / HAPUS LAGU DARI PLAYLIST PRIBADI AKUN
+  const handleSaveToPersonalPlaylist = async (song: Song) => {
+    const isAlreadySaved = personalPlaylist.some(
+      (s) => s.id === song.id || (s.videoId && s.videoId === song.videoId) || s.title === song.title
+    )
+    let updated: Song[]
+    if (isAlreadySaved) {
+      updated = personalPlaylist.filter(
+        (s) => s.id !== song.id && (!song.videoId || s.videoId !== song.videoId) && s.title !== song.title
+      )
+    } else {
+      updated = [...personalPlaylist, song]
+    }
+    setPersonalPlaylist(updated)
+    await savePersonalPlaylist(activeId, updated, isGoogleUser)
 
     const now = new Date()
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
@@ -904,7 +1112,43 @@ export const RoomPage: React.FC = () => {
       {
         id: 'act-' + Date.now(),
         type: 'add_song',
-        text: `${activeName} menambahkan "${newSong.title}"`,
+        text: isAlreadySaved
+          ? `Lagu "${song.title}" dihapus dari Playlist Pribadi`
+          : `Lagu "${song.title}" berhasil disimpan ke Playlist Pribadi Akun`,
+        time: timeStr,
+        user: activeName,
+      },
+      ...prev,
+    ])
+  }
+
+  // 17b. AKSI MEMUAT KOLEKSI PRIBADI KE DALAM ANTREAN RUANGAN (ROOM QUEUE)
+  const handleImportPersonalPlaylist = () => {
+    if (personalPlaylist.length === 0) return
+    const existingIds = new Set(queue.map((s) => s.id))
+    // Kloning objek lagu dengan ID baru agar tidak terikat referensi dua arah ke personalPlaylist
+    const uniqueSongs = personalPlaylist
+      .filter((s) => !existingIds.has(s.id))
+      .map((s) => ({ ...s, id: 'song-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6) }))
+
+    if (uniqueSongs.length === 0) return
+
+    const newQueue = [...queue, ...uniqueSongs]
+    setQueue(newQueue)
+    saveRoomState({ playlist: newQueue })
+
+    sendBroadcast({
+      type: 'REORDER_QUEUE',
+      payload: { queue: newQueue },
+    })
+
+    const now = new Date()
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    setActivities((prev) => [
+      {
+        id: 'act-' + Date.now(),
+        type: 'add_song',
+        text: `${activeName} memuat ${uniqueSongs.length} lagu dari koleksi pribadi ke antrean ruangan`,
         time: timeStr,
         user: activeName,
       },
@@ -963,7 +1207,18 @@ export const RoomPage: React.FC = () => {
       timestamp: timeStr,
       isSelf: true,
     }
-    setMessages((prev) => [...prev, newMsg])
+
+    setMessages((prev) => {
+      const nextMessages = [...prev, newMsg]
+      if (!isGoogleUser && typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(`oursync_chat_${roomId}`, JSON.stringify(nextMessages))
+        } catch {
+          // ignore
+        }
+      }
+      return nextMessages
+    })
 
     // Pancarkan secara real-time ke pasangan
     sendBroadcast({
@@ -975,18 +1230,20 @@ export const RoomPage: React.FC = () => {
       },
     })
 
-    // Simpan secara persisten ke tabel direct_messages di Supabase
-    try {
-      await supabase.from('direct_messages').insert({
-        id: msgId,
-        sender_id: activeId,
-        sender_name: activeName,
-        room_id: roomId,
-        message: text,
-        created_at: new Date().toISOString(),
-      })
-    } catch (err) {
-      console.warn('Gagal menyimpan chat ke tabel direct_messages:', err)
+    // Simpan secara persisten ke tabel direct_messages di Supabase jika user Google
+    if (isGoogleUser) {
+      try {
+        await supabase.from('direct_messages').insert({
+          id: msgId,
+          sender_id: activeId,
+          sender_name: activeName,
+          room_id: roomId,
+          message: text,
+          created_at: new Date().toISOString(),
+        })
+      } catch (err) {
+        console.warn('Gagal menyimpan chat ke tabel direct_messages:', err)
+      }
     }
   }
 
@@ -1068,6 +1325,18 @@ export const RoomPage: React.FC = () => {
         personalSongCount={personalPlaylist.length}
         onRequestMerge={handleRequestMergePlaylist}
         onUseHostPlaylist={() => {
+          // Joiner memilih mendengarkan antrean room yang sudah ada
+          // Minta sinkronisasi antrean room secara in-memory tanpa memutasi personal collection akun
+          if (channelRef.current) {
+            channelRef.current.send({
+              type: 'broadcast',
+              event: 'music_sync',
+              payload: {
+                type: 'REQUEST_ROOM_SYNC',
+                payload: { requesterId: clientId },
+              },
+            })
+          }
           const now = new Date()
           const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
           setActivities((prev) => [
@@ -1113,7 +1382,17 @@ export const RoomPage: React.FC = () => {
                 playerRef.current = player
               }}
               onDurationChange={(dur) => {
-                setTotalDurationSeconds(dur)
+                if (dur && dur > 0) {
+                  setTotalDurationSeconds(dur)
+                  const formatted = formatDuration(dur)
+                  setQueue((prevQueue) =>
+                    prevQueue.map((s, idx) =>
+                      idx === currentSongIndex
+                        ? { ...s, duration: formatted, durationSeconds: dur }
+                        : s
+                    )
+                  )
+                }
               }}
               onPlayerStateChange={(state) => {
                 // YouTube API: 1 = playing, 2 = paused, 0 = ended
@@ -1148,11 +1427,14 @@ export const RoomPage: React.FC = () => {
           <section className="lg:col-span-5 space-y-6">
             <PlaylistQueue
               queue={queue}
+              personalPlaylist={personalPlaylist}
               currentSongId={currentSong?.id}
               onPlaySong={handlePlaySong}
               onRemoveSong={handleRemoveSong}
               onAddSong={handleAddSong}
               onReorderQueue={handleReorderQueue}
+              onImportPersonalPlaylist={handleImportPersonalPlaylist}
+              onSaveToPersonalPlaylist={handleSaveToPersonalPlaylist}
             />
 
             <ChatAndActivity

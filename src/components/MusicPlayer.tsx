@@ -54,6 +54,12 @@ export const MusicPlayer: React.FC<MusicPlayerProps> = ({
   }
 
   const handleStateChange: YouTubeProps['onStateChange'] = (event: YouTubeEvent) => {
+    if (typeof event.target.getDuration === 'function') {
+      const duration = event.target.getDuration()
+      if (duration && duration > 0 && onDurationChange) {
+        onDurationChange(Math.floor(duration))
+      }
+    }
     if (onPlayerStateChange) {
       onPlayerStateChange(event.data)
     }

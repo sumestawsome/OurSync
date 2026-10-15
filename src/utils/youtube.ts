@@ -24,3 +24,32 @@ export function extractYouTubeId(urlOrId: string): string | null {
 export function getYouTubeThumbnail(videoId: string): string {
   return `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`
 }
+
+/**
+ * Format durasi dalam detik ke format mm:ss yang rapi
+ */
+export function formatDuration(seconds: number): string {
+  if (!seconds || isNaN(seconds) || seconds <= 0) return '--:--'
+  const m = Math.floor(seconds / 60)
+  const s = Math.floor(seconds % 60)
+  return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+}
+
+/**
+ * Mengambil metadata judul & artis video YouTube secara dinamis via oEmbed tanpa API key
+ */
+export async function fetchYouTubeVideoInfo(videoId: string): Promise<{ title?: string; author?: string }> {
+  try {
+    const res = await fetch(`https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`)
+    if (res.ok) {
+      const data = await res.json()
+      return {
+        title: data.title || undefined,
+        author: data.author_name || undefined,
+      }
+    }
+  } catch {
+    // Abaikan jika offline / gagal fetch
+  }
+  return {}
+}

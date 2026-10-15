@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import { X, KeyRound, ArrowRight } from 'lucide-react'
+import { cleanRoomCode } from '../utils/roomCode'
 
 interface JoinRoomModalProps {
   isOpen: boolean
@@ -17,14 +18,40 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
 
   if (!isOpen) return null
 
+  // Smart-parser saat pengguna mengetik atau menempelkan teks
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value
+    // Jika mengandung pola URL (slash, titik, titik dua, atau tanya), langsung isolasi kodenya
+    if (raw.includes('/') || raw.includes(':') || raw.includes('.') || raw.includes('?')) {
+      const parsed = cleanRoomCode(raw)
+      setRoomCode(parsed)
+    } else {
+      // Input teks biasa: otomatis kapital (UPPERCASE) dan rapikan spasi
+      setRoomCode(raw.toUpperCase().replace(/\s+/g, '-'))
+    }
+    setError('')
+  }
+
+  // Intersep event Paste untuk memproses URL lengkap tanpa terpotong
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    e.preventDefault()
+    const pastedText = e.clipboardData.getData('text')
+    if (pastedText) {
+      const parsed = cleanRoomCode(pastedText)
+      setRoomCode(parsed)
+      setError('')
+    }
+  }
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!roomCode.trim()) {
+    const cleaned = cleanRoomCode(roomCode)
+    if (!cleaned) {
       setError('Masukkan kode undangan ruangan terlebih dahulu')
       return
     }
     setError('')
-    onJoin(roomCode.trim())
+    onJoin(cleaned)
   }
 
   return (
@@ -65,14 +92,14 @@ export const JoinRoomModal: React.FC<JoinRoomModalProps> = ({
             <input
               type="text"
               value={roomCode}
-              onChange={(e) => {
-                setRoomCode(e.target.value.toUpperCase())
-                setError('')
-              }}
+              onChange={handleInputChange}
+              onPaste={handlePaste}
               placeholder="CONTOH: LOVE-8506"
-              maxLength={12}
               className="w-full px-4 py-3 bg-[#fcf8f9] border-2 border-zinc-300 text-center text-lg font-heading tracking-widest text-[#1e1b1d] placeholder:text-zinc-400 focus:outline-none focus:border-[#ec4899] transition-all"
             />
+            <p className="text-[11px] text-zinc-500 mt-2 text-center font-sans">
+              💡 Bisa menempelkan (<span className="italic">paste</span>) kode saja atau tautan URL kamar lengkap.
+            </p>
             {error && (
               <p className="text-xs text-[#e11d48] mt-2 text-center font-semibold">
                 {error}

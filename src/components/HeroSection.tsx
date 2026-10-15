@@ -123,7 +123,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                 setNickname(e.target.value)
                 if (errorMsg) setErrorMsg('')
               }}
-              placeholder="Misal: Sayang, Reza, atau Aura"
+              placeholder="Misal: Sayang, Reza, atau Putri"
               className="w-full px-4 py-3.5 bg-[#fcf8f9] border border-zinc-300 text-[#1e1b1d] placeholder:text-zinc-400 font-sans text-base focus:outline-none focus:border-[#ec4899] transition-colors"
             />
             {errorMsg && (

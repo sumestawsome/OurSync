@@ -85,3 +85,5 @@ export type BroadcastEvent =
   | { type: 'CHAT_MESSAGE'; payload: { sender: string; message: string; timestamp: number } }
   | { type: 'REQUEST_MERGE_PLAYLIST'; payload: { requesterId: string; requesterName: string; songs: Song[] } }
   | { type: 'RESPONSE_MERGE_PLAYLIST'; payload: { requesterId: string; accepted: boolean; hostName: string; mergedQueue?: Song[] } }
+  | { type: 'REQUEST_ROOM_SYNC'; payload: { requesterId: string } }
+  | { type: 'RESPONSE_ROOM_SYNC'; payload: { queue: Song[]; currentSongIndex: number; isPlaying: boolean; currentTime: number } }

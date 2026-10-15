@@ -10,6 +10,7 @@ interface AuthContextType {
   activeName: string
   activeId: string
   activeAvatar?: string
+  isGoogleUser: boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -103,6 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         activeName,
         activeId,
         activeAvatar,
+        isGoogleUser: Boolean(user),
       }}
     >
       {children}

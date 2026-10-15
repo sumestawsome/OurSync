@@ -98,34 +98,46 @@ export const ChatAndActivity: React.FC<ChatAndActivityProps> = ({
             ref={chatScrollRef}
             className="flex-1 overflow-y-auto space-y-3.5 pr-1.5"
           >
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex flex-col ${
-                  msg.isSelf ? 'items-end' : 'items-start'
-                }`}
-              >
-                <div className="flex items-center gap-1.5 mb-1 px-0.5">
-                  <span className="text-[10px] font-bold text-zinc-500">
-                    {msg.sender}
-                  </span>
-                  <span className="text-[9px] text-zinc-400 font-mono">
-                    {msg.timestamp}
-                  </span>
+            {messages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center p-6 text-zinc-400">
+                <div className="p-3 bg-[#fdf2f6] border border-[#f9a8d4] text-[#ec4899] mb-3">
+                  <MessageCircle className="w-6 h-6" />
                 </div>
-
-                {/* GELEMBUNG PESAN KOTAK BERSUDUT TAJAM (NO ROUNDED) */}
+                <p className="text-sm font-bold text-zinc-700 font-heading">Belum Ada Obrolan</p>
+                <p className="text-xs text-zinc-400 mt-1 max-w-xs">
+                  Sapa pasanganmu atau kirim pesan pertama untuk memulai percakapan di ruangan ini.
+                </p>
+              </div>
+            ) : (
+              messages.map((msg) => (
                 <div
-                  className={`max-w-[85%] px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed border ${
-                    msg.isSelf
-                      ? 'bg-[#fdf2f6] border-[#f9a8d4] text-[#1e1b1d]'
-                      : 'bg-[#f8fafc] border-zinc-200 text-[#1e1b1d]'
+                  key={msg.id}
+                  className={`flex flex-col ${
+                    msg.isSelf ? 'items-end' : 'items-start'
                   }`}
                 >
-                  {msg.text}
+                  <div className="flex items-center gap-1.5 mb-1 px-0.5">
+                    <span className="text-[10px] font-bold text-zinc-500">
+                      {msg.sender}
+                    </span>
+                    <span className="text-[9px] text-zinc-400 font-mono">
+                      {msg.timestamp}
+                    </span>
+                  </div>
+
+                  {/* GELEMBUNG PESAN KOTAK BERSUDUT TAJAM (NO ROUNDED) */}
+                  <div
+                    className={`max-w-[85%] px-3.5 py-2.5 text-xs sm:text-sm leading-relaxed border ${
+                      msg.isSelf
+                        ? 'bg-[#fdf2f6] border-[#f9a8d4] text-[#1e1b1d]'
+                        : 'bg-[#f8fafc] border-zinc-200 text-[#1e1b1d]'
+                    }`}
+                  >
+                    {msg.text}
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
 
           {/* Chat Input Field dengan Sudut Siku Tajam */}
@@ -166,29 +178,41 @@ export const ChatAndActivity: React.FC<ChatAndActivityProps> = ({
           <p className="text-[11px] text-zinc-500 font-bold uppercase tracking-wider mb-2">
             Riwayat Interaksi Ruang Bersama
           </p>
-          {activities.map((act) => (
-            <div
-              key={act.id}
-              className="p-3 bg-[#faf7f8] border border-zinc-200 flex items-start gap-2.5"
-            >
-              <div className="p-1.5 bg-white border border-zinc-200 shrink-0 mt-0.5">
-                {getActivityIcon(act.type)}
+          {activities.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-14 text-center text-zinc-400">
+              <div className="p-3 bg-[#faf7f8] border border-zinc-200 text-zinc-400 mb-3">
+                <Activity className="w-6 h-6" />
               </div>
-              <div className="flex-1 min-w-0">
-                <p className="text-xs text-[#1e1b1d] font-sans leading-snug">
-                  {act.text}
-                </p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-[#ec4899] font-bold">
-                    {act.user}
-                  </span>
-                  <span className="text-[10px] text-zinc-400 font-mono">
-                    {act.time}
-                  </span>
+              <p className="text-sm font-bold text-zinc-700 font-heading">Belum Ada Aktivitas</p>
+              <p className="text-xs text-zinc-400 mt-1 max-w-xs">
+                Aktivitas lagu dan sinkronisasi akan tercatat otomatis saat Anda memutar musik.
+              </p>
+            </div>
+          ) : (
+            activities.map((act) => (
+              <div
+                key={act.id}
+                className="p-3 bg-[#faf7f8] border border-zinc-200 flex items-start gap-2.5"
+              >
+                <div className="p-1.5 bg-white border border-zinc-200 shrink-0 mt-0.5">
+                  {getActivityIcon(act.type)}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs text-[#1e1b1d] font-sans leading-snug">
+                    {act.text}
+                  </p>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-[#ec4899] font-bold">
+                      {act.user}
+                    </span>
+                    <span className="text-[10px] text-zinc-400 font-mono">
+                      {act.time}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       )}
     </div>
